@@ -121,9 +121,10 @@ npm run release
 
 | 触发方式 | 说明 |
 | --- | --- |
-| `push` tag `v*` | 打版本 tag 时自动构建并创建/更新 Release |
-| `release: published` | 发布 Release 后自动构建并回传资源 |
-| `workflow_dispatch` | 手动触发，产物只上传到 Actions Artifacts（不写 Release） |
+| `release: published` | **推荐**：在 Releases 页面发布版本后自动构建，并把产物回传该 Release |
+| `workflow_dispatch` | 手动触发，产物只上传到 Actions Artifacts（不写 Release），适合先验证构建 |
+
+> 只打 tag 不会触发构建 —— 请在 Releases 页面基于该 tag 发布 Release。
 
 **构建矩阵**
 
