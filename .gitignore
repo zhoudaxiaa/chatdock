@@ -12,6 +12,7 @@ dist/
 
 # DSH harness local files
 .dsh/
+.workbuddy-ai/
 
 # Local one-off helper scripts (dev only)
 scripts/git-stage*.mjs

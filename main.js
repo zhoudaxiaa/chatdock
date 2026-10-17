@@ -7,6 +7,27 @@ const START_URL = 'https://chatgpt.com';
 const HOT_KEY = 'Control+Space'; // 全局切换热键
 const WINDOW_TITLE = 'ChatGPT';
 
+// ===== 启动日志 =====
+// 安装版是 GUI 进程，没有控制台；一旦启动阶段抛异常，用户只会看到“双击没反应”。
+// 这里把启动异常落到 %APPDATA%\chatgpt-electron\startup-error.log，方便排查。
+const LOG_DIR = process.env.APPDATA
+  ? path.join(process.env.APPDATA, 'chatgpt-electron')
+  : app.getPath('userData');
+const LOG_FILE = path.join(LOG_DIR, 'startup-error.log');
+
+function logStartupError(tag, err) {
+  const line = `[${new Date().toISOString()}] ${tag}: ${err && (err.stack || err.message) || err}\n`;
+  try {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    fs.appendFileSync(LOG_FILE, line);
+  } catch { /* 日志写不进去也不能再抛 */ }
+  console.error(line);
+}
+
+process.on('uncaughtException', err => logStartupError('uncaughtException', err));
+process.on('unhandledRejection', err => logStartupError('unhandledRejection', err));
+
+
 // ===== 登录态桥接端口（与 browser-extension 里的配置保持一致）=====
 const BRIDGE_PORT = 32123;
 const BRIDGE_TOKEN = 'dsh-chatgpt-bridge-2026';
@@ -137,15 +158,28 @@ function startCookieBridge() {
 // 启动时会自动全部加载
 function loadExtensions() {
   const dir = path.join(__dirname, 'extensions');
-  try { fs.mkdirSync(dir, { recursive: true }); } catch {}
-  fs.readdirSync(dir, { withFileTypes: true }).forEach(ent => {
-    const p = path.join(dir, ent.name);
-    if (ent.isDirectory() && fs.existsSync(path.join(p, 'manifest.json'))) {
-      session.defaultSession.loadExtension(p)
-        .then(ext => console.log('[扩展已加载]', ext.name))
-        .catch(err => console.warn('[扩展加载失败]', ent.name, err.message));
+  // 注意：打包成 asar 后目录可能是只读的、甚至整个目录不存在（空目录不会被打包）。
+  // 这里任何一步失败都只记日志，绝不能中断后续的窗口创建。
+  try {
+    if (!fs.existsSync(dir)) {
+      console.log('[扩展] 目录不存在，跳过:', dir);
+      return;
     }
-  });
+    fs.readdirSync(dir, { withFileTypes: true }).forEach(ent => {
+      const p = path.join(dir, ent.name);
+      try {
+        if (ent.isDirectory() && fs.existsSync(path.join(p, 'manifest.json'))) {
+          session.defaultSession.loadExtension(p)
+            .then(ext => console.log('[扩展已加载]', ext.name))
+            .catch(err => console.warn('[扩展加载失败]', ent.name, err.message));
+        }
+      } catch (err) {
+        console.warn('[扩展加载异常]', ent.name, err.message);
+      }
+    });
+  } catch (err) {
+    console.warn('[扩展] 扫描失败，跳过:', err.message);
+  }
 }
 
 // ===== 窗口 =====
@@ -233,6 +267,8 @@ function createWindow() {
   });
 
   win.loadURL(START_URL);
+  win.show();    // 确保窗口出现在前台（避免“双击没反应”的错觉）
+  win.focus();
 
   // 点 X（右上角关闭）= 隐藏而不是退出，保证全局热键一直可用
   win.on('close', (e) => {
@@ -279,15 +315,45 @@ function createTray() {
   return tray;
 }
 
-app.whenReady().then(() => {
-  loadExtensions();
-  startCookieBridge();   // 开启登录态桥接端口
-  createWindow();
-  createTray();          // 系统托盘常驻入口
+// ===== 单实例 =====
+// 重复双击图标时只唤起已有窗口，避免堆出一堆没有窗口的僵尸进程
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (win && !win.isDestroyed()) {
+      win.show();
+      win.focus();
+    } else if (app.isReady()) {
+      createWindow();
+    }
+  });
 
-  const ok = globalShortcut.register(HOT_KEY, toggleWindow);
-  if (!ok) console.warn('全局热键注册失败（可能被其他程序占用）');
-});
+  app.whenReady().then(() => {
+    // 每一步都单独兜底：任何一环失败都不能连累窗口创建
+    try { loadExtensions(); } catch (err) { logStartupError('loadExtensions', err); }
+    try { startCookieBridge(); } catch (err) { logStartupError('startCookieBridge', err); }
+    try {
+      createWindow();
+    } catch (err) {
+      logStartupError('createWindow', err);
+      app.quit();
+      return;
+    }
+    try { createTray(); } catch (err) { logStartupError('createTray', err); }
+
+    try {
+      const ok = globalShortcut.register(HOT_KEY, toggleWindow);
+      if (!ok) console.warn('全局热键注册失败（可能被其他程序占用）');
+    } catch (err) {
+      logStartupError('globalShortcut', err);
+    }
+  }).catch(err => {
+    logStartupError('whenReady', err);
+    app.quit();
+  });
+}
 
 // 应用退出时释放热键
 app.on('will-quit', () => globalShortcut.unregisterAll());

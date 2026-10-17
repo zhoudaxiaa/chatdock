@@ -1,3 +1,27 @@
+## v1.0.1
+
+修复 v1.0.0 安装版「双击没反应、无窗口也无报错」的问题。
+
+### 🐞 修复
+
+- **安装版启动即静默失败**：`extensions/` 目录里的 `.gitkeep` 是点文件，打包时匹配不到，整个空目录没有进入 `app.asar`；启动时 `fs.readdirSync` 抛 `ENOENT`，`whenReady` 回调中断，窗口永远不会创建。现在目录缺失只记日志并跳过。
+- **启动流程容错**：扩展加载、桥接服务、托盘、热键注册各自独立兜底，任一环节失败都不再影响窗口创建。
+- **启动异常落盘**：未捕获异常与 Promise 拒绝写入 `%APPDATA%\chatgpt-electron\startup-error.log`，GUI 进程也能事后排查。
+- **单实例锁**：重复双击只唤起已有窗口，不再堆积无窗口的后台进程。
+- **窗口显式显示**：创建后主动 `show()` + `focus()`，避免窗口在后台不显示。
+
+### 📦 资源包
+
+| 类型 | 平台 | 架构 | 文件 |
+| --- | --- | --- | --- |
+| 桌面应用 | Windows | x64 | `ChatGPT Desktop Setup 1.0.1.exe`（NSIS 安装版）、`ChatGPT Desktop 1.0.1.exe`（便携版）、`*.zip` |
+| 桌面应用 | macOS | arm64 | `*.dmg`、`*.zip` |
+| 浏览器扩展 | Chrome / Edge | 通用 | `chatgpt-session-bridge-v*.zip` |
+
+> 已安装 v1.0.0 的用户直接覆盖安装 v1.0.1 即可，登录态保存在 `%APPDATA%\chatgpt-electron`，不会被清除。
+
+---
+
 ## v1.0.0
 
 首个正式版本：ChatGPT 桌面壳（Electron 套壳），附带配套浏览器扩展插件包。
