@@ -1,5 +1,3 @@
-# Release Notes
-
 ## v1.0.0
 
 首个正式版本：ChatGPT 桌面壳（Electron 套壳），附带配套浏览器扩展插件包。
