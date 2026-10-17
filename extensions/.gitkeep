@@ -1,0 +1,3 @@
+# 把已解包的 Chrome 扩展文件夹放进来：
+# extensions/<扩展名>/manifest.json
+# 应用启动时自动加载

@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output (electron-builder artifacts)
+dist/
+
+# Release artifacts
+*.exe
+*.dmg
+*.zip
+*.pkg
+
+# DSH harness local files
+.dsh/
+
+# Local launcher (dev-only)
+launch-app.cjs
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.suo

@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGPT Session Bridge",
+  "version": "1.0",
+  "description": "把默认浏览器里的 ChatGPT 登录态（Cookie）转发到本机 Electron 套壳，使其完成登录",
+  "permissions": ["cookies"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://*.chatgpt.com/*",
+    "https://openai.com/*",
+    "https://*.openai.com/*",
+    "http://127.0.0.1:32123/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "同步 ChatGPT 登录态到 Electron 套壳"
+  }
+}
