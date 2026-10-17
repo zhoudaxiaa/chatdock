@@ -11,7 +11,58 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: build-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
 jobs:
+  # ---------------------------------------------------------------
+  # 1) 浏览器扩展「ChatGPT Session Bridge」插件包
+  # ---------------------------------------------------------------
+  extension:
+    name: Package extension (chrome zip)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read extension version
+        id: meta
+        run: |
+          VERSION=$(node -p "require('./browser-extension/manifest.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Extension version: $VERSION"
+
+      - name: Package extension as zip
+        run: |
+          mkdir -p dist
+          cd browser-extension
+          zip -r "../dist/chatgpt-session-bridge-v${{ steps.meta.outputs.version }}.zip" . \
+            -x "*.DS_Store" -x "__MACOSX/*"
+          cd ..
+          ls -lh dist
+
+      - name: Upload extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-extension
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: Attach extension to GitHub Release
+        if: github.event_name != 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name || github.ref_name }}
+          files: dist/*.zip
+          fail_on_unmatched_files: true
+
+  # ---------------------------------------------------------------
+  # 2) 桌面应用安装包：Windows x64 + macOS arm64
+  # ---------------------------------------------------------------
   build:
     name: Build (${{ matrix.target }} / ${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
@@ -41,8 +92,6 @@ jobs:
         run: npm install
 
       - name: Build ${{ matrix.target }} ${{ matrix.arch }}
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npm run build:${{ matrix.target }} -- --${{ matrix.arch }}
 
       - name: Upload build artifacts (workflow_dispatch)
@@ -54,8 +103,9 @@ jobs:
             dist/*.exe
             dist/*.dmg
             dist/*.zip
+          if-no-files-found: warn
 
-      - name: Attach assets to GitHub Release
+      - name: Attach installers to GitHub Release
         if: github.event_name != 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
@@ -65,3 +115,4 @@ jobs:
             dist/*.exe
             dist/*.dmg
             dist/*.zip
+          fail_on_unmatched_files: false

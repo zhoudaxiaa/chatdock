@@ -13,6 +13,11 @@ dist/
 # DSH harness local files
 .dsh/
 
+# Local one-off helper scripts (dev only)
+scripts/git-stage*.mjs
+scripts/probe-ssh.mjs
+scripts/gh-create-workflow.mjs
+
 # Local launcher (dev-only)
 launch-app.cjs
 
