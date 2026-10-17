@@ -92,7 +92,7 @@ jobs:
         run: npm install
 
       - name: Build ${{ matrix.target }} ${{ matrix.arch }}
-        run: npm run build:${{ matrix.target }} -- --${{ matrix.arch }}
+        run: npm run build:${{ matrix.target }} -- --${{ matrix.arch }} --publish never
 
       - name: Upload build artifacts (workflow_dispatch)
         if: github.event_name == 'workflow_dispatch'
