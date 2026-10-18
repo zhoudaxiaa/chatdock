@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>toolbar</title>
+<style>
+  :root {
+    --bg: #f4f4f4; --fg: #333; --muted: #888; --border: #dcdcdc; --hover: #e4e4e4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1e1e1e; --fg: #e6e6e6; --muted: #8a8a8a; --border: #333; --hover: #2f2f2f; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; user-select: none; }
+  body {
+    display: flex; align-items: center; gap: 4px; padding: 0 8px;
+    background: var(--bg); color: var(--fg); border-bottom: 1px solid var(--border);
+    font: 13px/1 system-ui, "Microsoft YaHei", sans-serif;
+    -webkit-app-region: drag;               /* 整条栏当标题栏拖动；双击空白处 = 最大化/还原 */
+  }
+  /* 给系统窗口控制按钮留位置：Windows 在右侧（最小化/最大化/关闭，约 138px），macOS 红绿灯在左侧 */
+  body.win32 { padding-right: 146px; }
+  body.darwin { padding-left: 84px; }
+  .title { font-weight: 600; padding: 0 8px 0 4px; }
+  button {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 26px; padding: 0 10px; border: 0; border-radius: 6px;
+    background: transparent; color: inherit; font: inherit; cursor: pointer;
+    -webkit-app-region: no-drag;            /* 按钮必须排除出拖动区，否则点不了 */
+  }
+  button:hover { background: var(--hover); }
+  button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .drag-spacer { flex: 1; min-width: 16px; }
+</style>
+</head>
+<body>
+  <span class="title">ChatGPT</span>
+
+  <button id="settings" title="设置">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    <span>设置</span>
+  </button>
+
+  <button id="shot" title="区域截图">
+    <svg viewBox="0 0 24 24"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>
+    <span>截图</span><span class="hint" id="shotKey"></span>
+  </button>
+
+  <div class="drag-spacer"></div>
+
+<script>
+  document.body.classList.add(window.barApi.platform);
+  const pretty = (s) => String(s || '').replace(/Control/g, 'Ctrl').replace(/Meta/g, 'Win/Cmd');
+  const shotKey = document.getElementById('shotKey');
+  const showKeys = (shortcuts) => { shotKey.textContent = shortcuts ? pretty(shortcuts.screenshot) : ''; };
+
+  document.getElementById('shot').addEventListener('click', () => window.barApi.screenshot());
+  document.getElementById('settings').addEventListener('click', () => window.barApi.openSettings());
+
+  window.barApi.getShortcuts().then(showKeys).catch(() => {});
+  window.barApi.onShortcuts(showKeys);
+</script>
+</body>
+</html>

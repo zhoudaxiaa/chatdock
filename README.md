@@ -36,6 +36,8 @@
 | --- | --- |
 | 🪟 原生窗口 | 干净的桌面窗口，关闭按钮只隐藏窗口，进程常驻后台 |
 | ⌨️ 全局热键 | `Control + Space` 在任何应用中唤起 / 隐藏窗口 |
+| 📸 区域截图 | `Control + Alt + A` 框选屏幕区域（支持多显示器，矩形 / 箭头 / 画笔 / 文字 / 马赛克标注），确认后复制到剪贴板并可自动粘贴进输入框，基于 [electron-screenshots](https://github.com/nashaofu/screenshots)（MIT） |
+| ⚙️ 快捷键设置 | 窗口顶部「设置」按钮可修改所有功能快捷键，自动检测冲突与被占用，配置保存在 `%APPDATA%\chatgpt-electron\settings.json` |
 | 🖥️ 系统托盘 | 托盘图标左键切换窗口显示，右键菜单退出应用 |
 | 🍪 登录态桥接 | 本地 HTTP 服务（`127.0.0.1:32123`）接收浏览器扩展同步的 Cookies，一键继承浏览器登录态 |
 | 🌐 UA / Client-Hints 伪装 | UA 伪装为 Chrome 130，并通过 CDP 覆盖 `Sec-CH-UA`，规避 Google OAuth 的 `disallowed_useragent` 拦截 |
@@ -65,10 +67,13 @@ npm start
 
 #### 常用快捷键
 
+以下为默认值，均可在窗口顶部「设置」中修改：
+
 | 按键 | 作用 |
 | --- | --- |
 | `Control + Space` | 全局唤起 / 隐藏窗口 |
-| `Control + Q` | 退出应用 |
+| `Control + Alt + A` | 全局区域截图 |
+| `Control + Q` | 退出应用（仅窗口获得焦点时有效） |
 
 ---
 
@@ -142,8 +147,11 @@ npm run release
 
 ```
 chatgpt-electron/
-├── main.js                  # 主进程：窗口 / 托盘 / 全局热键 / 桥接服务 / UA 伪装
+├── main.js                  # 主进程：窗口 / 托盘 / 全局热键 / 截图 / 桥接服务 / UA 伪装
+├── app-settings.js          # 快捷键定义、校验、窗口内匹配、settings.json 读写（纯逻辑，无 Electron 依赖）
 ├── preload.js               # 预加载脚本：外链意图标记、会话识别
+├── bar.html / bar-preload.js            # 窗口顶部工具栏（截图 / 设置按钮）
+├── settings.html / settings-preload.js  # 设置窗口（快捷键录入、截图选项）
 ├── package.json             # 依赖与 electron-builder 打包配置
 ├── icon.png                 # 应用与托盘图标
 ├── browser-extension/       # 配套 Chrome 扩展「ChatGPT Session Bridge」
@@ -171,7 +179,10 @@ A：确认桌面应用正在运行（桥接服务随应用启动），并且 `12
 A：先看 `%APPDATA%\chatgpt-electron\startup-error.log`，启动阶段的未捕获异常都会写在这里。v1.0.0 有过一次这类问题（`extensions/` 空目录未被打包，`readdirSync` 抛 `ENOENT` 中断了启动流程），v1.0.1 已修复。若日志为空，检查是否已被单实例锁拦截（重复双击只会唤起已有窗口）。
 
 **Q：热键 `Control + Space` 与输入法冲突？**
-A：`Control + Space` 常被输入法切换占用，可在 `main.js` 中修改 `HOT_KEY` 常量后重新构建。
+A：`Control + Space` 常被输入法切换占用。点窗口顶部「设置」，改成别的组合键即可，无需重新构建。若某个热键启动时被其他程序占用，会写入 `startup-error.log`，应用本身照常运行，到「设置」里换一个键即可。
+
+**Q：截图热键没反应 / 和微信、QQ 截图冲突？**
+A：同样到「设置」里改键。默认 `Control + Alt + A` 与微信、QQ 的默认截图键相同，二者同时运行时先注册的一方生效。
 
 **Q：为什么 macOS 只有 M 芯片版？**
 A：CI 默认只构建 arm64 以节省构建时间；需要 Intel 版可自行改矩阵参数，或本地执行 `npm run build:mac -- --x64`。

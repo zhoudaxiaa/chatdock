@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>设置</title>
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f6f6f7; --fg: #222; --muted: #777; --border: #d9d9de;
+    --accent: #10a37f; --accent-fg: #fff; --danger: #d93025; --hover: #ececef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #212121; --panel: #2b2b2b; --fg: #ececec; --muted: #9a9a9a; --border: #3d3d3d; --hover: #353535; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    display: flex; flex-direction: column;
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.5 system-ui, "Microsoft YaHei", sans-serif;
+  }
+  main { flex: 1; overflow-y: auto; padding: 20px 24px 8px; }
+  h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 18px 0 8px; letter-spacing: .04em; }
+  h2:first-child { margin-top: 0; }
+  .row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 14px; margin-bottom: 8px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  }
+  .row .info { flex: 1; min-width: 0; }
+  .row .name { font-weight: 600; }
+  .row .desc { font-size: 12px; color: var(--muted); }
+  .badge {
+    display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px;
+    font-size: 11px; font-weight: 500; vertical-align: 1px;
+    border: 1px solid var(--border); color: var(--muted);
+  }
+  .key {
+    min-width: 150px; height: 32px; padding: 0 10px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+    font: 13px ui-monospace, Consolas, monospace; cursor: pointer; text-align: center;
+  }
+  .key:hover { background: var(--hover); }
+  .key.recording { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); color: var(--accent); }
+  .reset { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 4px; }
+  .reset:hover { color: var(--fg); text-decoration: underline; }
+  label.toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; flex: 1; }
+  label.toggle input { width: 16px; height: 16px; accent-color: var(--accent); }
+  .error { min-height: 20px; margin: 4px 0 0; color: var(--danger); font-size: 13px; }
+  .tip { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+  footer {
+    display: flex; align-items: center; gap: 8px; padding: 12px 24px;
+    border-top: 1px solid var(--border); background: var(--bg);
+  }
+  footer .spacer { flex: 1; }
+  button.btn {
+    height: 32px; padding: 0 16px; border-radius: 6px; cursor: pointer; font: inherit;
+    border: 1px solid var(--border); background: var(--panel); color: var(--fg);
+  }
+  button.btn:hover { background: var(--hover); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  button.primary:hover { filter: brightness(1.08); background: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+</style>
+</head>
+<body>
+<main>
+  <h2>快捷键</h2>
+  <div id="shortcuts"></div>
+  <p class="tip">点击右侧按键框，然后按下新的组合键；按 Esc 取消录入。全局快捷键需包含 Ctrl / Alt / Shift 等修饰键。</p>
+
+  <h2>截图</h2>
+  <div class="row"><label class="toggle"><input type="checkbox" id="hideWindow"><span>截图时先隐藏本应用窗口<br><span class="desc">避免把本应用自己截进画面</span></span></label></div>
+  <div class="row"><label class="toggle"><input type="checkbox" id="autoPaste"><span>截图确认后自动粘贴到输入框<br><span class="desc">关闭则只复制到剪贴板，需要时手动 Ctrl+V</span></span></label></div>
+
+  <p class="error" id="error"></p>
+</main>
+
+<footer>
+  <button class="btn" id="resetAll">全部恢复默认</button>
+  <span class="spacer"></span>
+  <button class="btn" id="cancel">取消</button>
+  <button class="btn primary" id="save">保存</button>
+</footer>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const pretty = (s) => String(s || '').replace(/Control/g, 'Ctrl').replace(/Meta/g, 'Win/Cmd');
+
+  let state = null;       // { settings, actions, defaults }
+  let draft = null;       // 正在编辑的副本，点保存才生效
+  let recording = null;   // 正在录入的功能 id
+
+  const MOD_CODES = ['ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight'];
+  const CODE_MAP = {
+    Space: 'Space', Tab: 'Tab', Enter: 'Return', Backspace: 'Backspace', Delete: 'Delete', Insert: 'Insert',
+    ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+    Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown', Escape: 'Esc',
+    Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\',
+    Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', Backquote: '`'
+  };
+  function codeToKey(code) {
+    let m;
+    if ((m = /^Key([A-Z])$/.exec(code))) return m[1];
+    if ((m = /^Digit(\d)$/.exec(code))) return m[1];
+    if ((m = /^F(\d{1,2})$/.exec(code))) return 'F' + m[1];
+    return CODE_MAP[code] || null;
+  }
+
+  function showError(msg) { $('error').textContent = msg || ''; }
+
+  function render() {
+    const box = $('shortcuts');
+    box.textContent = '';
+    for (const a of state.actions) {
+      const row = document.createElement('div');
+      row.className = 'row';
+
+      const info = document.createElement('div');
+      info.className = 'info';
+      const name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = a.label;
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = a.scope === 'global' ? '全局' : '窗口内';
+      name.appendChild(badge);
+      const desc = document.createElement('div');
+      desc.className = 'desc';
+      desc.textContent = a.desc;
+      info.append(name, desc);
+
+      const key = document.createElement('button');
+      key.className = 'key' + (recording === a.id ? ' recording' : '');
+      key.textContent = recording === a.id ? '请按下新的快捷键…' : pretty(draft.shortcuts[a.id]);
+      key.addEventListener('click', () => { recording = a.id; showError(''); render(); });
+      // 注意：不能用 blur 判断“取消录入”——重绘会删掉聚焦中的按钮、窗口失去系统焦点
+      // 也会触发 blur，都会把刚开始的录入误清掉。取消只认：Esc、或鼠标点到别处（见下方 mousedown）。
+
+      const reset = document.createElement('button');
+      reset.className = 'reset';
+      reset.textContent = '默认';
+      reset.title = '恢复为 ' + pretty(a.default);
+      reset.addEventListener('click', () => { draft.shortcuts[a.id] = a.default; recording = null; showError(''); render(); });
+
+      row.append(info, key, reset);
+      box.appendChild(row);
+      if (recording === a.id) setTimeout(() => key.focus(), 0);
+    }
+    $('hideWindow').checked = !!draft.hideWindowOnCapture;
+    $('autoPaste').checked = !!draft.autoPasteAfterCapture;
+  }
+
+  // 录入中，鼠标点到「按键框」以外的地方 = 取消录入
+  document.addEventListener('mousedown', (e) => {
+    if (!recording) return;
+    if (e.target.closest && e.target.closest('.key')) return;
+    recording = null;
+    render();
+  }, true);
+
+  window.addEventListener('keydown', (e) => {
+    if (!recording) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (MOD_CODES.includes(e.code)) return;            // 只按了修饰键，等主键
+    const hasMod = e.ctrlKey || e.altKey || e.shiftKey || e.metaKey;
+    if (e.code === 'Escape' && !hasMod) { recording = null; showError(''); render(); return; }
+
+    const key = codeToKey(e.code);
+    if (!key) { showError('该按键不能作为快捷键，请换一个'); return; }
+    if (!hasMod && !/^F\d+$/.test(key)) { showError('至少需要包含一个修饰键（Ctrl / Alt / Shift）'); return; }
+
+    const parts = [];
+    if (e.ctrlKey) parts.push('Control');
+    if (e.altKey) parts.push('Alt');
+    if (e.shiftKey) parts.push('Shift');
+    if (e.metaKey) parts.push('Meta');
+    draft.shortcuts[recording] = parts.concat(key).join('+');
+    recording = null;
+    showError('');
+    render();
+  }, true);
+
+  $('hideWindow').addEventListener('change', (e) => { draft.hideWindowOnCapture = e.target.checked; });
+  $('autoPaste').addEventListener('change', (e) => { draft.autoPasteAfterCapture = e.target.checked; });
+
+  $('resetAll').addEventListener('click', () => {
+    draft = JSON.parse(JSON.stringify(state.defaults));
+    recording = null;
+    showError('');
+    render();
+  });
+  $('cancel').addEventListener('click', () => window.settingsApi.close());
+  $('save').addEventListener('click', async () => {
+    $('save').disabled = true;
+    showError('');
+    try {
+      const r = await window.settingsApi.save(draft);
+      if (r && r.ok && r.warning) {
+        // 已保存，但有没改动的键本来就被别的程序占用：不自动关窗，让用户看到提示
+        showError('已保存。注意：' + r.warning);
+      } else if (r && r.ok) {
+        window.settingsApi.close();
+      } else {
+        showError((r && r.error) || '保存失败');
+      }
+    } catch (err) {
+      showError('保存失败：' + err.message);
+    } finally {
+      $('save').disabled = false;
+    }
+  });
+
+  window.settingsApi.load().then((s) => {
+    if (!s) { showError('无法读取设置'); return; }
+    state = s;
+    draft = JSON.parse(JSON.stringify(s.settings));
+    render();
+  }).catch((err) => showError('无法读取设置：' + err.message));
+</script>
+</body>
+</html>
