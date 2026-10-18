@@ -2,12 +2,16 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('barApi', {
-  // 顶栏要给系统窗口控制按钮（Windows 右侧）/ 红绿灯（macOS 左侧）留出位置
+  // 顶栏要给 macOS 红绿灯留出位置（Windows 的窗口按钮由我们自己画）
   platform: process.platform,
   getShortcuts: () => ipcRenderer.invoke('bar:get-shortcuts'),
   onShortcuts: (cb) => {
     ipcRenderer.on('bar:shortcuts', (_e, shortcuts) => cb(shortcuts));
   },
   openSettings: () => ipcRenderer.send('bar:open-settings'),
-  screenshot: () => ipcRenderer.send('bar:screenshot')
+  screenshot: () => ipcRenderer.send('bar:screenshot'),
+  windowAction: (action) => ipcRenderer.send('bar:window-action', action),
+  onMaximized: (cb) => {
+    ipcRenderer.on('bar:maximized', (_e, maximized) => cb(maximized));
+  }
 });

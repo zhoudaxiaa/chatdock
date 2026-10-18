@@ -18,8 +18,7 @@
     background: var(--bg); color: var(--fg); border-bottom: 1px solid var(--border);
     font: 13px/1 system-ui, "Microsoft YaHei", sans-serif;
   }
-  /* 给系统窗口控制按钮留位置：Windows 在右侧（最小化/最大化/关闭，约 138px），macOS 红绿灯在左侧 */
-  body.win32 { padding-right: 146px; }
+  /* 只给 macOS 红绿灯留位置；Windows 的窗口按钮由下面自绘 */
   body.darwin { padding-left: 84px; }
   /* 只有中间这块空白是窗口拖动区。
      不要把 drag 设在 body 上：那会把左侧标题/留白一并变成窗口非客户区，
@@ -42,7 +41,18 @@
   button:hover { background: var(--hover); }
   button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .hint { color: var(--muted); font-size: 12px; }
-  .drag-spacer { flex: 1; min-width: 16px; }
+
+  /* ===== 自绘窗口按钮（仅 Windows/Linux）===== */
+  .win-controls { display: none; }
+  body:not(.darwin) .win-controls {
+    display: flex; align-self: stretch; margin-left: 8px;
+  }
+  .win-controls button.wc-btn {
+    width: 46px; height: 100%; padding: 0; border-radius: 0; gap: 0;
+    justify-content: center; align-items: center;
+  }
+  .win-controls button.wc-btn svg { width: 10px; height: 10px; stroke-width: 1.1; }
+  .win-controls button.wc-close:hover { background: #e81123; color: #fff; }
 </style>
 </head>
 <body>
@@ -60,6 +70,18 @@
 
   <div class="drag-spacer"></div>
 
+  <div class="win-controls">
+    <button class="wc-btn" id="minBtn" title="最小化">
+      <svg viewBox="0 0 10 10"><path d="M1 5h8"/></svg>
+    </button>
+    <button class="wc-btn" id="maxBtn" title="最大化">
+      <svg viewBox="0 0 10 10"><rect x="1.2" y="1.2" width="7.6" height="7.6"/></svg>
+    </button>
+    <button class="wc-btn wc-close" id="closeBtn" title="关闭">
+      <svg viewBox="0 0 10 10"><path d="M1.2 1.2l7.6 7.6M8.8 1.2l-7.6 7.6"/></svg>
+    </button>
+  </div>
+
 <script>
   document.body.classList.add(window.barApi.platform);
   const pretty = (s) => String(s || '').replace(/Control/g, 'Ctrl').replace(/Meta/g, 'Win/Cmd');
@@ -71,6 +93,20 @@
 
   window.barApi.getShortcuts().then(showKeys).catch(() => {});
   window.barApi.onShortcuts(showKeys);
+
+  // 自绘窗口按钮
+  const ICON_MAX = '<svg viewBox="0 0 10 10"><rect x="1.2" y="1.2" width="7.6" height="7.6"/></svg>';
+  const ICON_RESTORE = '<svg viewBox="0 0 10 10"><rect x="1.2" y="2.8" width="6" height="6"/><path d="M3.2 2.8V1.2h5.6v5.6H7.2"/></svg>';
+  const maxBtn = document.getElementById('maxBtn');
+
+  document.getElementById('minBtn').addEventListener('click', () => window.barApi.windowAction('minimize'));
+  maxBtn.addEventListener('click', () => window.barApi.windowAction('maximize'));
+  document.getElementById('closeBtn').addEventListener('click', () => window.barApi.windowAction('close'));
+
+  window.barApi.onMaximized((maximized) => {
+    maxBtn.innerHTML = maximized ? ICON_RESTORE : ICON_MAX;
+    maxBtn.title = maximized ? '向下还原' : '最大化';
+  });
 </script>
 </body>
 </html>

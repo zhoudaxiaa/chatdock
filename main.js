@@ -1,6 +1,6 @@
 const {
   app, BrowserWindow, WebContentsView, globalShortcut, session, shell, ipcMain,
-  Tray, Menu, clipboard, nativeImage, nativeTheme
+  Tray, Menu, clipboard, nativeImage
 } = require('electron');
 const fs = require('fs');
 const path = require('path');
@@ -265,16 +265,13 @@ function lockLocalPage(wc) {
   wc.on('will-navigate', (event) => event.preventDefault());
 }
 
-// 工具栏兼任标题栏：去掉系统标题栏，Windows 用 titleBarOverlay 把最小化/最大化/关闭
-// 画在工具栏右侧（颜色需与 bar.html 的浅/深色底一致），macOS 保留左上角红绿灯。
-const BAR_COLORS = {
-  light: { color: '#f4f4f4', symbolColor: '#333333' },
-  dark: { color: '#1e1e1e', symbolColor: '#e6e6e6' }
-};
-const overlayOptions = () => ({
-  ...BAR_COLORS[nativeTheme.shouldUseDarkColors ? 'dark' : 'light'],
-  height: BAR_HEIGHT
-});
+// 工具栏兼任标题栏。
+// 这里**不用** titleBarOverlay：Windows 上 overlay 会让系统把窗口顶部一段当作 caption
+// （标题栏），该区域内的鼠标事件被窗口层吞掉，只有显式标了 -webkit-app-region: no-drag
+// 的元素能收到点击。表现就是「自己的按钮能点，但下方 ChatGPT 页面顶部那一块点不了」。
+// 所以改成隐藏标题栏 + 自绘最小化/最大化/关闭，鼠标事件全部落到页面里。
+// macOS 用 hiddenInset，保留左上角原生红绿灯。
+const IS_MAC = process.platform === 'darwin';
 
 function createWindow() {
   win = new BrowserWindow({
@@ -285,18 +282,10 @@ function createWindow() {
     title: WINDOW_TITLE,
     autoHideMenuBar: true,
     icon: path.join(__dirname, 'icon.png'),
-    titleBarStyle: 'hidden',
-    ...(process.platform === 'darwin'
-      ? { trafficLightPosition: { x: 12, y: (BAR_HEIGHT - 16) / 2 } }
-      : { titleBarOverlay: overlayOptions() })
+    titleBarStyle: IS_MAC ? 'hiddenInset' : 'hidden',
+    ...(IS_MAC ? { trafficLightPosition: { x: 12, y: (BAR_HEIGHT - 16) / 2 } } : {})
   });
   win.setMenuBarVisibility(false);
-  // 系统切换深浅色时，窗口控制按钮的底色 / 图标色跟着换，否则会和工具栏对不上
-  const syncOverlayTheme = () => {
-    if (process.platform === 'darwin' || !win || win.isDestroyed()) return;
-    try { win.setTitleBarOverlay(overlayOptions()); } catch { /* 忽略 */ }
-  };
-  nativeTheme.on('updated', syncOverlayTheme);
 
   // ---- ChatGPT 页面 ----
   chatView = new WebContentsView({
@@ -319,6 +308,15 @@ function createWindow() {
   layoutViews();
   ['resize', 'enter-full-screen', 'leave-full-screen', 'maximize', 'unmaximize', 'restore']
     .forEach(ev => win.on(ev, layoutViews));
+
+  // 自绘的最大化按钮需要知道自己当前该显示「最大化」还是「还原」
+  const notifyMaximized = () => {
+    if (barView && !barView.webContents.isDestroyed()) {
+      barView.webContents.send('bar:maximized', !!(win && !win.isDestroyed() && win.isMaximized()));
+    }
+  };
+  win.on('maximize', notifyMaximized);
+  win.on('unmaximize', notifyMaximized);
 
   const wc = chatView.webContents;
   spoofChromeUA(wc);   // 伪装 UA + Client Hints，让 Google 登录不拦截
@@ -347,6 +345,7 @@ function createWindow() {
 
   lockLocalPage(barView.webContents);
   barView.webContents.loadFile(path.join(__dirname, 'bar.html'))
+    .then(notifyMaximized)
     .catch(err => logStartupError('loadBar', err));
 
   wc.loadURL(START_URL);
@@ -362,7 +361,6 @@ function createWindow() {
     }
   });
   win.on('closed', () => {
-    nativeTheme.removeListener('updated', syncOverlayTheme);
     // 子视图的 webContents 不会随窗口自动销毁，需要手动关
     for (const v of [chatView, barView]) {
       try { if (v && !v.webContents.isDestroyed()) v.webContents.close(); } catch { /* 忽略 */ }
@@ -646,6 +644,16 @@ ipcMain.on('settings:close', (e) => {
 ipcMain.handle('bar:get-shortcuts', (e) => (fromBar(e) ? settings.shortcuts : null));
 ipcMain.on('bar:open-settings', (e) => { if (fromBar(e)) openSettings(); });
 ipcMain.on('bar:screenshot', (e) => { if (fromBar(e)) void startScreenshot(); });
+
+// 自绘窗口按钮：最小化 / 最大化-还原 / 关闭
+ipcMain.on('bar:window-action', (e, action) => {
+  if (!fromBar(e) || !win || win.isDestroyed()) return;
+  if (action === 'minimize') win.minimize();
+  else if (action === 'maximize') {
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+  } else if (action === 'close') win.close();
+});
 
 // ===== 系统托盘 =====
 // 关掉窗口只是隐藏，托盘图标常驻：左键单击切换显示/隐藏，右键菜单可退出
