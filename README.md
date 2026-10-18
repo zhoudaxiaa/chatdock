@@ -38,6 +38,7 @@
 | ⌨️ 全局热键 | `Control + Space` 在任何应用中唤起 / 隐藏窗口 |
 | 📸 区域截图 | `Control + Alt + A` 框选屏幕区域（支持多显示器，矩形 / 箭头 / 画笔 / 文字 / 马赛克标注），确认后复制到剪贴板并可自动粘贴进输入框，基于 [electron-screenshots](https://github.com/nashaofu/screenshots)（MIT） |
 | ⚙️ 快捷键设置 | 窗口顶部「设置」按钮可修改所有功能快捷键，自动检测冲突与被占用，配置保存在 `%APPDATA%\chatgpt-electron\settings.json` |
+| 🚪 三个退出入口 | `Control + Q`、顶栏右键菜单、设置页「退出应用」；退出有超时兜底，不会留下关不掉的进程 |
 | 🖥️ 系统托盘 | 托盘图标左键切换窗口显示，右键菜单退出应用 |
 | 🍪 登录态桥接 | 本地 HTTP 服务（`127.0.0.1:32123`）接收浏览器扩展同步的 Cookies，一键继承浏览器登录态 |
 | 🌐 UA / Client-Hints 伪装 | UA 伪装为 Chrome 130，并通过 CDP 覆盖 `Sec-CH-UA`，规避 Google OAuth 的 `disallowed_useragent` 拦截 |
@@ -74,6 +75,9 @@ npm start
 | `Control + Space` | 全局唤起 / 隐藏窗口 |
 | `Control + Alt + A` | 全局区域截图 |
 | `Control + Q` | 退出应用（仅窗口获得焦点时有效） |
+
+> 右上角 `×` 只是把窗口隐藏到托盘（全局热键继续可用），不会退出程序。
+> 要完全退出：按 `Control + Q`，或在顶栏空白处右键 →「退出应用」，或在设置页底部点「退出应用」。
 
 ---
 

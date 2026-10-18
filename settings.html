@@ -73,6 +73,15 @@
   <div class="row"><label class="toggle"><input type="checkbox" id="hideWindow"><span>截图时先隐藏本应用窗口<br><span class="desc">避免把本应用自己截进画面</span></span></label></div>
   <div class="row"><label class="toggle"><input type="checkbox" id="autoPaste"><span>截图确认后自动粘贴到输入框<br><span class="desc">关闭则只复制到剪贴板，需要时手动 Ctrl+V</span></span></label></div>
 
+  <h2>其他</h2>
+  <div class="row">
+    <div class="info">
+      <div class="name">退出应用</div>
+      <div class="desc">点右上角 × 只是把窗口隐藏到系统托盘（全局快捷键继续可用），不会退出程序。要完全退出请用这里。</div>
+    </div>
+    <button class="btn" id="quitApp">退出应用</button>
+  </div>
+
   <p class="error" id="error"></p>
 </main>
 
@@ -192,6 +201,7 @@
     render();
   });
   $('cancel').addEventListener('click', () => window.settingsApi.close());
+  $('quitApp').addEventListener('click', () => window.settingsApi.quit());
   $('save').addEventListener('click', async () => {
     $('save').disabled = true;
     showError('');

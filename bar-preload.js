@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('barApi', {
   openSettings: () => ipcRenderer.send('bar:open-settings'),
   screenshot: () => ipcRenderer.send('bar:screenshot'),
   windowAction: (action) => ipcRenderer.send('bar:window-action', action),
+  contextMenu: () => ipcRenderer.send('bar:context-menu'),
+  quit: () => ipcRenderer.send('bar:quit'),
   onMaximized: (cb) => {
     ipcRenderer.on('bar:maximized', (_e, maximized) => cb(maximized));
   }

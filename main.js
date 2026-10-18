@@ -36,6 +36,7 @@ process.on('unhandledRejection', err => logStartupError('unhandledRejection', er
 // ===== 登录态桥接端口（与 browser-extension 里的配置保持一致）=====
 const BRIDGE_PORT = 32123;
 const BRIDGE_TOKEN = 'dsh-chatgpt-bridge-2026';
+let bridgeServer = null;   // 退出时要主动关掉，别让它拖着进程
 
 // 去掉 UA 里的 Electron / chatgpt-electron 标识，避免 Google 登录提示
 // “此浏览器或应用可能不安全”（disallowed_useragent）而拦截 OAuth
@@ -153,6 +154,10 @@ function startCookieBridge() {
   server.on('error', err => {
     console.warn('[登录态桥接] 监听失败', err.code || err.message);
   });
+  // unref：这个 server 只是给浏览器扩展推送 Cookie 用的，不该拖着进程不让它退出。
+  // （退出时 Electron 会收尾 Node 环境，一个还挂在 listen 状态的句柄足以让收尾卡住。）
+  server.unref();
+  bridgeServer = server;
   server.listen(BRIDGE_PORT, '127.0.0.1', () => {
     console.log('[登录态桥接] 正在监听 http://127.0.0.1:' + BRIDGE_PORT);
   });
@@ -212,11 +217,20 @@ function spoofChromeUA(wc) {
     mobile: false
   };
   const apply = () => {
+    // 窗口销毁时 debugger 会触发 detach，此时再碰 wc / wc.debugger 会抛
+    // “Object has been destroyed”，整段包在 try 里最稳妥。
+    if (app.isQuiting) return;
     try {
       wc.debugger.attach('1.3');
-    } catch { /* 已连接则忽略 */ }
-    wc.debugger.sendCommand('Network.setUserAgentOverride', { userAgent: ua, userAgentMetadata: metadata })
-      .catch(err => console.warn('[UA 伪装失败]', err.message));
+      wc.debugger.sendCommand('Network.setUserAgentOverride', { userAgent: ua, userAgentMetadata: metadata })
+        .catch(err => {
+          // 退出时目标会被销毁，这条命令必然失败，没必要刷屏
+          if (app.isQuiting) return;
+          try {
+            if (!wc.isDestroyed()) console.warn('[UA 伪装失败]', err.message);
+          } catch { /* 已销毁 */ }
+        });
+    } catch { /* 目标已销毁 / 已断开，忽略 */ }
   };
   apply();
   // 开发工具等场景会导致 debugger 断开，断开后重新挂上伪装
@@ -242,6 +256,18 @@ function layoutViews() {
 function focusChat() {
   const wc = chatWC();
   if (wc) wc.focus();
+}
+
+// ===== 退出日志 =====
+// 退出路径上任何一步卡住，用户看到的就是「窗口没了、进程还在、任务管理器都关不掉」。
+// 这种事后再去复现很难，所以把关键节点落到 %APPDATA%\chatgpt-electron\quit.log（每次退出只有几行）。
+const QUIT_LOG = path.join(LOG_DIR, 'quit.log');
+function logQuit(msg) {
+  const line = `[${new Date().toISOString()}] ${msg}\n`;
+  try {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    fs.appendFileSync(QUIT_LOG, line);
+  } catch { /* 日志写不进去也不能再抛 */ }
 }
 
 // 窗口内快捷键（仅应用获得焦点时生效），按设置里 scope === 'window' 的功能动态匹配
@@ -363,7 +389,10 @@ function createWindow() {
   win.on('closed', () => {
     // 子视图的 webContents 不会随窗口自动销毁，需要手动关
     for (const v of [chatView, barView]) {
-      try { if (v && !v.webContents.isDestroyed()) v.webContents.close(); } catch { /* 忽略 */ }
+      try {
+        const w = v && v.webContents;
+        if (w && !w.isDestroyed()) w.close();
+      } catch (err) { logQuit('关闭子视图失败：' + err.message); }
     }
     chatView = null;
     barView = null;
@@ -397,9 +426,77 @@ function toggleWindow() {
   }
 }
 
-function quitApp() {
-  app.isQuiting = true;
-  app.quit();
+// ===== 退出看门狗（进程外兜底）=====
+// 主线程一旦卡进 Electron 的原生收尾流程（窗口已销毁、quit 事件已发，进程却不动了），
+// 进程内的 setTimeout 再也不会触发 —— 所以只能另起一个进程来强杀。
+// 用 ELECTRON_RUN_AS_NODE 让同一个可执行文件跑成纯 Node，不会多开一个应用实例。
+// 用 stdin 管道判断父进程死活：父进程一退出管道就断，子进程据此立刻收工，
+// 绝不会因为 PID 被系统复用而误杀别的程序。
+const WATCHDOG_SRC = `
+let done = false;
+const finish = () => { if (!done) { done = true; process.exit(0); } };
+process.stdin.on('end', finish);
+process.stdin.on('error', finish);
+process.stdin.resume();
+setTimeout(() => {
+  try { process.kill(Number(process.argv[1]), 'SIGKILL'); } catch (e) { /* 已经没了 */ }
+  finish();
+}, 9000);
+`;
+
+function armQuitWatchdog() {
+  try {
+    const child = require('child_process').spawn(
+      process.execPath,
+      ['-e', WATCHDOG_SRC, String(process.pid)],
+      {
+        detached: true,
+        stdio: ['pipe', 'ignore', 'ignore'],
+        windowsHide: true,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+      }
+    );
+    child.on('error', () => { /* 起不来就算了，不能影响正常退出 */ });
+    child.unref();
+  } catch (err) {
+    logQuit('看门狗启动失败（不影响退出）：' + err.message);
+  }
+}
+
+// ===== 退出 =====
+// 退出入口有三处：窗口内快捷键、托盘菜单、顶栏/设置窗口里的「退出应用」。
+// 三个坑都在这里处理：
+//   1) 这三处都发生在同步回调里（before-input-event / 菜单点击 / IPC）。在回调里直接
+//      app.quit() 会一边销毁窗口和 WebContentsView 的 webContents、一边继续走当前的
+//      输入/菜单消息循环，重入后主线程卡死 —— 表现就是「窗口没了，进程还在，关不掉」。
+//      所以真正退出推迟到 setImmediate。
+//   2) 进程内定时器兜底：app.quit() 返回了但事件循环还被句柄拖着时，6 秒后强制结束。
+//   3) 进程外兜底：主线程一旦卡进 Electron 的原生收尾流程，进程内的定时器再也不会触发，
+//      只能靠另一个进程强杀。见 armQuitWatchdog()。
+let quitRequested = false;
+function quitApp(source) {
+  if (quitRequested) return;
+  quitRequested = true;
+  app.isQuiting = true;          // 让 win.on('close') 放行，不再 hide
+  logQuit(`请求退出（来源：${source || '未知'}）`);
+  armQuitWatchdog();
+
+  setImmediate(() => {
+    try {
+      app.quit();
+    } catch (err) {
+      logQuit('app.quit 抛错，强制结束：' + err.message);
+      app.exit(0);
+    }
+  });
+
+  // 进程内兜底：app.quit() 返回了、事件循环却被句柄拖着时，6 秒后强制结束。
+  // 正常收尾在 2 秒内完成，6 秒已经是很宽的余量；进程外看门狗排在 9 秒之后。
+  const watchdog = setTimeout(() => {
+    logQuit('6 秒内未退出，强制结束进程');
+    app.exit(0);
+  }, 6000);
+  if (typeof watchdog.unref === 'function') watchdog.unref();
 }
 
 // ===== 设置：加载 / 全局热键注册 =====
@@ -411,7 +508,7 @@ const globalActionHandlers = {
   screenshot: () => { void startScreenshot(); }
 };
 const windowActionHandlers = {
-  quit: () => quitApp()
+  quit: () => quitApp('窗口内快捷键')
 };
 
 function unregisterGlobals() {
@@ -565,7 +662,7 @@ function openSettings() {
   }
   settingsWin = new BrowserWindow({
     width: 620,
-    height: 660,
+    height: 720,          // 刚好把「其他 / 退出应用」也显示出来，不用滚动
     minWidth: 520,
     minHeight: 520,
     title: '设置',
@@ -587,6 +684,7 @@ function openSettings() {
   // 根本到不了设置页）。所以设置窗口获得焦点期间暂时注销全局热键，失焦 / 关闭后恢复。
   sw.on('focus', () => unregisterGlobals());
   const resume = () => {
+    if (app.isQuiting) return;        // 正在退出时不要再把热键注册回去
     const r = applyGlobalShortcuts(settings.shortcuts);
     if (!r.ok) console.warn('[热键] 恢复失败:', r.error);
   };
@@ -640,6 +738,9 @@ ipcMain.handle('settings:save', (e, raw) => {
 ipcMain.on('settings:close', (e) => {
   if (fromSettingsWin(e)) settingsWin.close();
 });
+ipcMain.on('settings:quit', (e) => {
+  if (fromSettingsWin(e)) quitApp('设置窗口');
+});
 
 ipcMain.handle('bar:get-shortcuts', (e) => (fromBar(e) ? settings.shortcuts : null));
 ipcMain.on('bar:open-settings', (e) => { if (fromBar(e)) openSettings(); });
@@ -655,9 +756,27 @@ ipcMain.on('bar:window-action', (e, action) => {
   } else if (action === 'close') win.close();
 });
 
+// 顶栏右键菜单：给「退出」一个看得见摸得着的入口。
+// 光靠托盘图标不够 —— Windows 11 默认把托盘图标收进溢出区，用户根本找不到退出。
+const prettyAccel = (s) => String(s || '').replace(/Control/g, 'Ctrl').replace(/Meta/g, 'Win/Cmd');
+
+ipcMain.on('bar:context-menu', (e) => { if (fromBar(e)) showBarMenu(); });
+ipcMain.on('bar:quit', (e) => { if (fromBar(e)) quitApp('顶栏菜单'); });
+
+function showBarMenu() {
+  if (!win || win.isDestroyed()) return;
+  const k = settings.shortcuts;
+  Menu.buildFromTemplate([
+    { label: '设置…', click: openSettings },
+    { label: `区域截图\t${prettyAccel(k.screenshot)}`, click: () => { void startScreenshot(); } },
+    { type: 'separator' },
+    { label: '隐藏窗口', click: () => { if (win && !win.isDestroyed()) win.hide(); } },
+    { label: `退出应用\t${prettyAccel(k.quit)}`, click: () => quitApp('顶栏菜单') }
+  ]).popup({ window: win });
+}
+
 // ===== 系统托盘 =====
 // 关掉窗口只是隐藏，托盘图标常驻：左键单击切换显示/隐藏，右键菜单可退出
-const prettyAccel = (s) => String(s || '').replace(/Control/g, 'Ctrl').replace(/Meta/g, 'Win/Cmd');
 
 // 托盘菜单 / 提示里带着当前快捷键，所以改完设置后要刷新一次
 function refreshTray() {
@@ -669,7 +788,7 @@ function refreshTray() {
     { label: `区域截图\t${prettyAccel(k.screenshot)}`, click: () => { void startScreenshot(); } },
     { label: '设置…', click: openSettings },
     { type: 'separator' },
-    { label: '退出', click: quitApp }
+    { label: '退出', click: () => quitApp('托盘菜单') }
   ]));
 }
 
@@ -717,8 +836,21 @@ if (!gotSingleInstanceLock) {
   });
 }
 
-// 应用退出时释放热键
-app.on('will-quit', () => globalShortcut.unregisterAll());
+// 任何来源的退出（本应用的菜单 / 快捷键、系统关机、异常兜底里的 app.quit()）
+// 都要放行 win.on('close') 里的 hide 拦截，否则退出会被悄悄取消掉。
+app.on('before-quit', () => { app.isQuiting = true; });
 
-// 所有窗口被"消灭"时不退出（我们平时是 hide，不会走到这里，保险起见）
-app.on('window-all-closed', () => {});
+// 应用退出时释放热键、关掉常驻的 HTTP 服务
+app.on('will-quit', () => {
+  logQuit('will-quit：释放全局热键 / 关闭登录态桥接');
+  globalShortcut.unregisterAll();
+  try { if (bridgeServer) bridgeServer.close(); } catch { /* 忽略 */ }
+});
+app.on('quit', () => logQuit('quit：进程即将结束'));
+
+// 平时点 X 只是 hide，不会走到这里。真走到这里说明窗口已经被销毁了，
+// 这时候再留在后台就是个「没有界面、只剩热键」的僵尸进程，直接退出。
+app.on('window-all-closed', () => {
+  logQuit('window-all-closed：窗口已全部销毁');
+  quitApp('window-all-closed');
+});
