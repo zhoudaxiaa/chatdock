@@ -17,12 +17,22 @@
     display: flex; align-items: center; gap: 4px; padding: 0 8px;
     background: var(--bg); color: var(--fg); border-bottom: 1px solid var(--border);
     font: 13px/1 system-ui, "Microsoft YaHei", sans-serif;
-    -webkit-app-region: drag;               /* 整条栏当标题栏拖动；双击空白处 = 最大化/还原 */
   }
   /* 给系统窗口控制按钮留位置：Windows 在右侧（最小化/最大化/关闭，约 138px），macOS 红绿灯在左侧 */
   body.win32 { padding-right: 146px; }
   body.darwin { padding-left: 84px; }
-  .title { font-weight: 600; padding: 0 8px 0 4px; }
+  /* 只有中间这块空白是窗口拖动区。
+     不要把 drag 设在 body 上：那会把左侧标题/留白一并变成窗口非客户区，
+     真实鼠标点上去会被窗口层吞掉，表现成「左上角有块区域点不了」。 */
+  .drag-spacer {
+    flex: 1; min-width: 24px;
+    align-self: stretch;
+    -webkit-app-region: drag;               /* 按住拖动窗口，双击最大化 / 还原 */
+  }
+  .title {
+    font-weight: 600; padding: 0 8px 0 4px;
+    cursor: default;                        /* 纯展示，不假装可点 */
+  }
   button {
     display: inline-flex; align-items: center; gap: 6px;
     height: 26px; padding: 0 10px; border: 0; border-radius: 6px;
