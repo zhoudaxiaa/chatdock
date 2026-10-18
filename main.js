@@ -291,6 +291,21 @@ function lockLocalPage(wc) {
   wc.on('will-navigate', (event) => event.preventDefault());
 }
 
+// ChatGPT 登录后的界面会给自己的顶部栏加 `-webkit-app-region: drag`（给官方桌面端拖窗口用的）。
+// 在 Electron 里这个属性会把那块区域变成**窗口标题栏**：鼠标点上去会被窗口层吞掉，
+// 页面根本收不到事件 —— 表现就是「左上角有一块点不了」，而且只在登录后才出现。
+// 这里把页面里的拖动区全部中和掉；拖动窗口统一交给我们自己的顶栏空白区。
+const NO_DRAG_CSS = '*{-webkit-app-region:no-drag !important}';
+function neutralizeDragRegions(wc) {
+  const apply = () => {
+    if (!wc || wc.isDestroyed()) return;
+    wc.insertCSS(NO_DRAG_CSS).catch(() => { /* 页面还没就绪就下次再来 */ });
+  };
+  wc.on('did-finish-load', apply);
+  wc.on('did-navigate-in-page', apply);   // SPA 路由切换后重新压一遍
+  apply();
+}
+
 // 工具栏兼任标题栏。
 // 这里**不用** titleBarOverlay：Windows 上 overlay 会让系统把窗口顶部一段当作 caption
 // （标题栏），该区域内的鼠标事件被窗口层吞掉，只有显式标了 -webkit-app-region: no-drag
@@ -332,6 +347,7 @@ function createWindow() {
   win.contentView.addChildView(chatView);
   win.contentView.addChildView(barView);
   layoutViews();
+  neutralizeDragRegions(chatView.webContents);
   ['resize', 'enter-full-screen', 'leave-full-screen', 'maximize', 'unmaximize', 'restore']
     .forEach(ev => win.on(ev, layoutViews));
 
