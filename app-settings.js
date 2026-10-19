@@ -39,7 +39,8 @@ function defaultSettings() {
   return {
     shortcuts,
     hideWindowOnCapture: true,     // 截图时先隐藏本应用窗口，避免把自己截进去
-    autoPasteAfterCapture: true    // 截图确认后自动唤起窗口并粘贴到输入框
+    autoPasteAfterCapture: true,   // 截图确认后自动唤起窗口并粘贴到输入框
+    alwaysOnTopOnShow: true        // 唤起窗口时置顶，浮在其他应用上层
   };
 }
 
@@ -136,7 +137,8 @@ function validateSettings(raw) {
     value: {
       shortcuts,
       hideWindowOnCapture: bool(raw.hideWindowOnCapture, defaults.hideWindowOnCapture),
-      autoPasteAfterCapture: bool(raw.autoPasteAfterCapture, defaults.autoPasteAfterCapture)
+      autoPasteAfterCapture: bool(raw.autoPasteAfterCapture, defaults.autoPasteAfterCapture),
+      alwaysOnTopOnShow: bool(raw.alwaysOnTopOnShow, defaults.alwaysOnTopOnShow)
     }
   };
 }
@@ -178,7 +180,8 @@ function loadSettings(file) {
   const merged = {
     shortcuts: { ...defaults.shortcuts, ...(raw && raw.shortcuts) },
     hideWindowOnCapture: raw && raw.hideWindowOnCapture,
-    autoPasteAfterCapture: raw && raw.autoPasteAfterCapture
+    autoPasteAfterCapture: raw && raw.autoPasteAfterCapture,
+    alwaysOnTopOnShow: raw && raw.alwaysOnTopOnShow
   };
   const r = validateSettings(merged);
   if (r.ok) return r.value;
@@ -187,7 +190,8 @@ function loadSettings(file) {
   return {
     shortcuts: defaults.shortcuts,
     hideWindowOnCapture: bool(merged.hideWindowOnCapture, defaults.hideWindowOnCapture),
-    autoPasteAfterCapture: bool(merged.autoPasteAfterCapture, defaults.autoPasteAfterCapture)
+    autoPasteAfterCapture: bool(merged.autoPasteAfterCapture, defaults.autoPasteAfterCapture),
+    alwaysOnTopOnShow: bool(merged.alwaysOnTopOnShow, defaults.alwaysOnTopOnShow)
   };
 }
 

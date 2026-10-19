@@ -314,6 +314,47 @@ function neutralizeDragRegions(wc) {
 // macOS 用 hiddenInset，保留左上角原生红绿灯。
 const IS_MAC = process.platform === 'darwin';
 
+// ===== 置顶（浮在其他应用上层）=====
+// 快捷键唤起时窗口必须真正压在最前面。Windows 有前台锁（foreground lock）：
+// 一个被 hide() 过、或由后台进程 show() 出来的窗口，常常只在任务栏闪一下，
+// 实际仍被当前应用盖住 —— 表现就是「按了快捷键，窗口没出来 / 出来了但被挡住」。
+// 所以统一走 raiseWindow()：置顶开关打开时先 setAlwaysOnTop 再 show，显示后 moveTop() 兜底。
+// 层级用 'floating'：高于普通窗口，但不去抢任务栏 / 独占全屏程序的位置。
+const TOP_LEVEL = 'floating';
+
+function setTopmost(on) {
+  if (!win || win.isDestroyed()) return;
+  try {
+    win.setAlwaysOnTop(!!on, TOP_LEVEL);
+  } catch (err) {
+    console.warn('[置顶] 设置失败：' + err.message);
+  }
+}
+
+// 把主窗口显示到最前面（最小化则先还原），并按设置决定是否置顶
+function raiseWindow() {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  const topmost = !!settings.alwaysOnTopOnShow;
+  if (topmost) setTopmost(true);
+  win.show();
+  win.focus();
+  if (topmost && typeof win.moveTop === 'function') win.moveTop();
+  focusChat();
+}
+
+// 顶栏「置顶」按钮 / 托盘菜单 / 设置页共用的开关：立刻生效并写回配置文件
+function setTopmostSetting(on) {
+  settings.alwaysOnTopOnShow = !!on;
+  setTopmost(settings.alwaysOnTopOnShow);
+  const saved = settingsLib.saveSettings(SETTINGS_FILE, settings);
+  if (!saved.ok) console.warn('[置顶] 保存设置失败：' + saved.error);
+  if (barView && !barView.webContents.isDestroyed()) {
+    barView.webContents.send('bar:topmost', settings.alwaysOnTopOnShow);
+  }
+  refreshTray();
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -387,13 +428,18 @@ function createWindow() {
 
   lockLocalPage(barView.webContents);
   barView.webContents.loadFile(path.join(__dirname, 'bar.html'))
-    .then(notifyMaximized)
+    .then(() => {
+      notifyMaximized();
+      // 顶栏「置顶」按钮的初始状态
+      if (barView && !barView.webContents.isDestroyed()) {
+        barView.webContents.send('bar:topmost', settings.alwaysOnTopOnShow);
+      }
+    })
     .catch(err => logStartupError('loadBar', err));
 
   wc.loadURL(START_URL);
-  win.show();    // 确保窗口出现在前台（避免“双击没反应”的错觉）
-  win.focus();
-  focusChat();
+  // 首次显示也走同一套置顶逻辑，保证启动就是最前面那一层
+  raiseWindow();
 
   // 点 X（右上角关闭）= 隐藏而不是退出，保证全局热键一直可用
   win.on('close', (e) => {
@@ -423,10 +469,7 @@ function showMainWindow() {
     createWindow();
     return;
   }
-  if (win.isMinimized()) win.restore();
-  win.show();
-  win.focus();
-  focusChat();
+  raiseWindow();
 }
 
 // ===== 全局快捷键：唤起 / 隐藏窗口 =====
@@ -621,6 +664,10 @@ async function startScreenshot() {
     if (ctx.wasVisible && settings.hideWindowOnCapture) {
       win.hide();
       await delay(250);      // 等窗口真正从屏幕上消失，否则会被截进去
+    } else if (ctx.wasVisible && settings.alwaysOnTopOnShow) {
+      // 不隐藏窗口时，置顶的主窗口会把截图层（也是置顶窗口）压在下面，
+      // 框选时看不清也点不到 —— 截屏期间先临时取消置顶，结束后 showMainWindow 会恢复。
+      setTopmost(false);
     }
     await getScreenshots().startCapture();
   } catch (err) {
@@ -678,7 +725,7 @@ function openSettings() {
   }
   settingsWin = new BrowserWindow({
     width: 620,
-    height: 720,          // 刚好把「其他 / 退出应用」也显示出来，不用滚动
+    height: 720,          // 小屏也能放下；内容超出时设置页内部自行滚动
     minWidth: 520,
     minHeight: 520,
     title: '设置',
@@ -694,6 +741,10 @@ function openSettings() {
   });
   const sw = settingsWin;
   sw.setMenuBarVisibility(false);
+  // 主窗口置顶时设置窗口也要置顶，否则它会被主窗口盖住、点都点不到
+  if (settings.alwaysOnTopOnShow) {
+    try { sw.setAlwaysOnTop(true, TOP_LEVEL); } catch { /* 忽略 */ }
+  }
   lockLocalPage(sw.webContents);
 
   // 录入快捷键时，已注册的全局热键会被系统先吞掉（按 Ctrl+Alt+A 会直接触发截图，
@@ -733,6 +784,15 @@ ipcMain.handle('settings:save', (e, raw) => {
   if (!applied.ok) return applied;
 
   settings = v.value;
+  // 置顶开关改动立即生效，不必重启；设置窗口自己也要跟着置顶，
+  // 否则它会被刚刚变成置顶的主窗口盖住（保存有警告时窗口不会自动关闭）
+  setTopmost(settings.alwaysOnTopOnShow);
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    try {
+      settingsWin.setAlwaysOnTop(settings.alwaysOnTopOnShow, TOP_LEVEL);
+      settingsWin.moveTop();
+    } catch { /* 忽略 */ }
+  }
   const saved = settingsLib.saveSettings(SETTINGS_FILE, settings);
   if (!saved.ok) {
     // 配置文件写不进去：回滚内存和热键，避免“本次能用、重启就丢”的假象
@@ -743,6 +803,7 @@ ipcMain.handle('settings:save', (e, raw) => {
 
   if (barView && !barView.webContents.isDestroyed()) {
     barView.webContents.send('bar:shortcuts', settings.shortcuts);
+    barView.webContents.send('bar:topmost', settings.alwaysOnTopOnShow);
   }
   refreshTray();
   // 保存成功但设置窗口仍然开着（有警告时不自动关）：它还在前台，
@@ -759,6 +820,11 @@ ipcMain.on('settings:quit', (e) => {
 });
 
 ipcMain.handle('bar:get-shortcuts', (e) => (fromBar(e) ? settings.shortcuts : null));
+ipcMain.handle('bar:get-topmost', (e) => (fromBar(e) ? !!settings.alwaysOnTopOnShow : null));
+ipcMain.on('bar:toggle-topmost', (e) => {
+  if (!fromBar(e)) return;
+  setTopmostSetting(!settings.alwaysOnTopOnShow);
+});
 ipcMain.on('bar:open-settings', (e) => { if (fromBar(e)) openSettings(); });
 ipcMain.on('bar:screenshot', (e) => { if (fromBar(e)) void startScreenshot(); });
 
@@ -785,6 +851,12 @@ function showBarMenu() {
   Menu.buildFromTemplate([
     { label: '设置…', click: openSettings },
     { label: `区域截图\t${prettyAccel(k.screenshot)}`, click: () => { void startScreenshot(); } },
+    {
+      label: '窗口置顶',
+      type: 'checkbox',
+      checked: !!settings.alwaysOnTopOnShow,
+      click: (item) => setTopmostSetting(item.checked)
+    },
     { type: 'separator' },
     { label: '隐藏窗口', click: () => { if (win && !win.isDestroyed()) win.hide(); } },
     { label: `退出应用\t${prettyAccel(k.quit)}`, click: () => quitApp('顶栏菜单') }
@@ -802,6 +874,12 @@ function refreshTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: `显示 / 隐藏窗口\t${prettyAccel(k.toggleWindow)}`, click: toggleWindow },
     { label: `区域截图\t${prettyAccel(k.screenshot)}`, click: () => { void startScreenshot(); } },
+    {
+      label: '窗口置顶',
+      type: 'checkbox',
+      checked: !!settings.alwaysOnTopOnShow,
+      click: (item) => setTopmostSetting(item.checked)
+    },
     { label: '设置…', click: openSettings },
     { type: 'separator' },
     { label: '退出', click: () => quitApp('托盘菜单') }

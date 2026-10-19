@@ -53,6 +53,10 @@
   }
   .win-controls button.wc-btn svg { width: 10px; height: 10px; stroke-width: 1.1; }
   .win-controls button.wc-close:hover { background: #e81123; color: #fff; }
+
+  /* 置顶开关：开启时高亮，一眼能看出窗口是否浮在最上层 */
+  #pin.on { background: var(--hover); color: #10a37f; }
+  #pin.on svg { stroke-width: 2; }
 </style>
 </head>
 <body>
@@ -66,6 +70,11 @@
   <button id="shot" title="区域截图">
     <svg viewBox="0 0 24 24"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>
     <span>截图</span><span class="hint" id="shotKey"></span>
+  </button>
+
+  <button id="pin" title="窗口置顶">
+    <svg viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 3h6l-.5 5.3 2.5 3.2a1 1 0 0 1-.8 1.5H7.8a1 1 0 0 1-.8-1.5l2.5-3.2L9 3z"/></svg>
+    <span>置顶</span>
   </button>
 
   <div class="drag-spacer"></div>
@@ -90,6 +99,18 @@
 
   document.getElementById('shot').addEventListener('click', () => window.barApi.screenshot());
   document.getElementById('settings').addEventListener('click', () => window.barApi.openSettings());
+
+  // 置顶开关：顶栏按钮 / 托盘菜单 / 设置页三处状态保持一致
+  const pinBtn = document.getElementById('pin');
+  const showTopmost = (on) => {
+    pinBtn.classList.toggle('on', !!on);
+    pinBtn.title = on
+      ? '窗口已置顶（浮在其他应用上层），点击取消'
+      : '窗口未置顶，点击让它浮在其他应用上层';
+  };
+  pinBtn.addEventListener('click', () => window.barApi.toggleTopmost());
+  window.barApi.getTopmost().then(showTopmost).catch(() => {});
+  window.barApi.onTopmost(showTopmost);
 
   window.barApi.getShortcuts().then(showKeys).catch(() => {});
   window.barApi.onShortcuts(showKeys);

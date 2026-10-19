@@ -10,6 +10,11 @@ contextBridge.exposeInMainWorld('barApi', {
   },
   openSettings: () => ipcRenderer.send('bar:open-settings'),
   screenshot: () => ipcRenderer.send('bar:screenshot'),
+  getTopmost: () => ipcRenderer.invoke('bar:get-topmost'),
+  toggleTopmost: () => ipcRenderer.send('bar:toggle-topmost'),
+  onTopmost: (cb) => {
+    ipcRenderer.on('bar:topmost', (_e, on) => cb(on));
+  },
   windowAction: (action) => ipcRenderer.send('bar:window-action', action),
   contextMenu: () => ipcRenderer.send('bar:context-menu'),
   quit: () => ipcRenderer.send('bar:quit'),
