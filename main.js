@@ -318,7 +318,8 @@ const IS_MAC = process.platform === 'darwin';
 // 快捷键唤起时窗口必须真正压在最前面。Windows 有前台锁（foreground lock）：
 // 一个被 hide() 过、或由后台进程 show() 出来的窗口，常常只在任务栏闪一下，
 // 实际仍被当前应用盖住 —— 表现就是「按了快捷键，窗口没出来 / 出来了但被挡住」。
-// 所以统一走 raiseWindow()：置顶开关打开时先 setAlwaysOnTop 再 show，显示后 moveTop() 兜底。
+// 所以统一走 raiseWindow()：先 show 显示，再 setAlwaysOnTop 压层级，最后 moveTop() 兜底
+// （顺序很重要：macOS 上 hide→show 会重置窗口层级，置顶必须在 show 之后再设置）。
 // 层级用 'floating'：高于普通窗口，但不去抢任务栏 / 独占全屏程序的位置。
 const TOP_LEVEL = 'floating';
 
@@ -326,6 +327,11 @@ function setTopmost(on) {
   if (!win || win.isDestroyed()) return;
   try {
     win.setAlwaysOnTop(!!on, TOP_LEVEL);
+    // macOS 上置顶窗口只对“当前桌面(Spaces)”生效，切到别的桌面 / 全屏应用时
+    // 看起来就像置顶失效了。开启时让它在所有桌面（含全屏应用之上）都可见，关闭时恢复。
+    if (IS_MAC && typeof win.setVisibleOnAllWorkspaces === 'function') {
+      win.setVisibleOnAllWorkspaces(!!on, { visibleOnFullScreen: !!on });
+    }
   } catch (err) {
     console.warn('[置顶] 设置失败：' + err.message);
   }
@@ -336,9 +342,12 @@ function raiseWindow() {
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
   const topmost = !!settings.alwaysOnTopOnShow;
-  if (topmost) setTopmost(true);
   win.show();
   win.focus();
+  // macOS 上 hide→show 会把窗口层级重置回普通层（always-on-top 丢失），
+  // 所以置顶必须在 show() **之后**再压一次；Windows 上提前压也没有副作用。
+  // 这里统一在显示后再设置，macOS / Windows 都生效。
+  if (topmost) setTopmost(true);
   if (topmost && typeof win.moveTop === 'function') win.moveTop();
   focusChat();
 }
@@ -391,6 +400,12 @@ function createWindow() {
   neutralizeDragRegions(chatView.webContents);
   ['resize', 'enter-full-screen', 'leave-full-screen', 'maximize', 'unmaximize', 'restore']
     .forEach(ev => win.on(ev, layoutViews));
+
+  // macOS 上 hide→show 会重置窗口层级，任何路径把窗口显示出来都重新压一次置顶，
+  // 保证“置顶”开关在任何唤起方式下都真正生效
+  win.on('show', () => {
+    if (settings && settings.alwaysOnTopOnShow) setTopmost(true);
+  });
 
   // 自绘的最大化按钮需要知道自己当前该显示「最大化」还是「还原」
   const notifyMaximized = () => {
@@ -743,7 +758,12 @@ function openSettings() {
   sw.setMenuBarVisibility(false);
   // 主窗口置顶时设置窗口也要置顶，否则它会被主窗口盖住、点都点不到
   if (settings.alwaysOnTopOnShow) {
-    try { sw.setAlwaysOnTop(true, TOP_LEVEL); } catch { /* 忽略 */ }
+    try {
+      sw.setAlwaysOnTop(true, TOP_LEVEL);
+      if (IS_MAC && typeof sw.setVisibleOnAllWorkspaces === 'function') {
+        sw.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      }
+    } catch { /* 忽略 */ }
   }
   lockLocalPage(sw.webContents);
 
@@ -790,6 +810,11 @@ ipcMain.handle('settings:save', (e, raw) => {
   if (settingsWin && !settingsWin.isDestroyed()) {
     try {
       settingsWin.setAlwaysOnTop(settings.alwaysOnTopOnShow, TOP_LEVEL);
+      if (IS_MAC && typeof settingsWin.setVisibleOnAllWorkspaces === 'function') {
+        settingsWin.setVisibleOnAllWorkspaces(settings.alwaysOnTopOnShow, {
+          visibleOnFullScreen: !!settings.alwaysOnTopOnShow
+        });
+      }
       settingsWin.moveTop();
     } catch { /* 忽略 */ }
   }
