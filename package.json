@@ -5,6 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "icons:tray": "node scripts/make-tray-icon.mjs --preview",
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac",
     "release": "electron-builder --win --mac"
@@ -25,6 +26,9 @@
       "bar.html",
       "settings.html",
       "icon.png",
+      "trayTemplate.png",
+      "trayTemplate@2x.png",
+      "trayTemplate@3x.png",
       "extensions/**"
     ],
     "asarUnpack": [

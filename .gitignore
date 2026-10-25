@@ -13,6 +13,7 @@ dist/
 # DSH harness local files
 .dsh/
 .workbuddy-ai/
+.workbuddy/
 
 # Local one-off helper scripts (dev only)
 scripts/git-stage*.mjs
@@ -27,6 +28,9 @@ launch-app.cjs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# 托盘图标预览图（由 scripts/make-tray-icon.mjs --preview 生成，仅用于人眼检查）
+preview-tray-icon.png
 
 # OS
 .DS_Store

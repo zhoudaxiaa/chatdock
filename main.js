@@ -911,8 +911,31 @@ function refreshTray() {
   ]));
 }
 
+// 托盘图标：mac 与其他平台要分开处理
+// - macOS 菜单栏图标只有 22pt 高，必须用「单色 + 透明背景」的 template image
+//   （系统自动适配浅色/深色菜单栏，选中态还会反色）。直接把 512px 的彩色 icon.png
+//   丢进去，会被整块塞进菜单栏：视觉上又大又糊，深色菜单栏下尤其明显。
+//   trayTemplate.png 由 scripts/make-tray-icon.mjs 生成，自带 @2x/@3x 倍图。
+// - Windows / Linux 托盘沿用彩色 icon.png。
+function createTrayImage() {
+  const colorful = path.join(__dirname, 'icon.png');
+  if (process.platform !== 'darwin') return nativeImage.createFromPath(colorful);
+
+  const templatePath = path.join(__dirname, 'trayTemplate.png');
+  const template = nativeImage.createFromPath(templatePath);
+  if (!template.isEmpty()) {
+    // 文件名已以 Template 结尾，Electron 会自动识别；这里显式再声明一次，避免打包后命名被改
+    template.setTemplateImage(true);
+    return template;
+  }
+
+  logStartupError('createTrayImage', new Error(`菜单栏图标缺失，回退到彩色图标：${templatePath}`));
+  // 兜底：至少缩到菜单栏尺寸，不至于占满整条菜单栏
+  return nativeImage.createFromPath(colorful).resize({ width: 16, height: 16 });
+}
+
 function createTray() {
-  tray = new Tray(path.join(__dirname, 'icon.png'));
+  tray = new Tray(createTrayImage());
   tray.on('click', toggleWindow);
   refreshTray();
   return tray;

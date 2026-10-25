@@ -158,12 +158,13 @@ chatgpt-electron/
 ├── bar.html / bar-preload.js            # 窗口顶部工具栏（截图 / 设置按钮）
 ├── settings.html / settings-preload.js  # 设置窗口（快捷键录入、截图选项）
 ├── package.json             # 依赖与 electron-builder 打包配置
-├── icon.png                 # 应用与托盘图标
+├── icon.png                 # 应用图标（Windows / Linux 托盘也用它）
+├── trayTemplate*.png        # macOS 菜单栏专用单色 template 图标（16/32/48 三档倍图，由脚本生成）
 ├── browser-extension/       # 配套 Chrome 扩展「ChatGPT Session Bridge」
 │   ├── manifest.json        # MV3 清单
 │   └── background.js        # 读取 Cookie 并 POST 到本机桥接端口
 ├── extensions/              # 启动时自动加载的扩展目录（.gitkeep 占位）
-├── scripts/                 # 发布 / 调试辅助脚本
+├── scripts/                 # 发布 / 调试辅助脚本（含 make-tray-icon.mjs：重新生成菜单栏图标）
 ├── .github/workflows/       # GitHub Actions：构建 + 发版 + 插件打包
 ├── README.md
 ├── RELEASE_NOTES.md
