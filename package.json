@@ -8,7 +8,8 @@
     "icons:tray": "node scripts/make-tray-icon.mjs --preview",
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac",
-    "release": "electron-builder --win --mac"
+    "release": "electron-builder --win --mac",
+    "release:gh": "node scripts/publish.mjs"
   },
   "build": {
     "appId": "com.zhoudaxiaa.chatgpt-electron",
@@ -40,7 +41,7 @@
         "zip"
       ],
       "category": "public.app-category.productivity",
-      "icon": "build/icon.png"
+      "icon": "icon.png"
     },
     "win": {
       "target": [
@@ -48,7 +49,7 @@
         "portable",
         "zip"
       ],
-      "icon": "build/icon.png"
+      "icon": "icon.png"
     },
     "nsis": {
       "oneClick": false,

@@ -136,6 +136,25 @@ npm run release
 
 > 只打 tag 不会触发构建 —— 请在 Releases 页面基于该 tag 发布 Release。
 
+### 一键发版（推荐）
+
+本机没装 `gh` 也能发：`scripts/publish.mjs` 走 GitHub REST API，凭据优先读 `GITHUB_TOKEN` / `GH_TOKEN`，否则复用 git 凭据管理器里已存的 token。
+
+```bash
+# 1) 改 package.json 的 version，并把 RELEASE_NOTES.md 的标题改成 `## v<新版本>`
+# 2) 提交改动后：
+npm run release:gh              # 打 tag → 推 main/tag → 创建 Release → 等 CI 出包
+npm run release:gh -- --dry-run # 只预览要做的事，不写远端
+npm run release:gh -- --draft   # 建草稿 Release（不触发构建，需手动 Publish）
+npm run release:gh -- --no-wait # 创建完就退出，不阻塞等 CI
+```
+
+脚本会做这些前置校验，任一条不满足就直接停下（不会 `git add -A`、也不会强推 tag）：
+
+- 当前分支是 `main`、工作区干净、本地 `main` 与 `origin/main` 一致；
+- `RELEASE_NOTES.md` 首个标题的版本号与 `package.json` 一致 —— 工作流用它的内容当 Release 正文，对不上说明忘更新说明；
+- 本地 / 远端都不存在同名 tag 或 Release（避免覆盖已发布版本）。
+
 **构建矩阵**
 
 - `windows-latest` → x64：NSIS `.exe`、便携版 `.exe`、`.zip`
@@ -164,7 +183,7 @@ chatgpt-electron/
 │   ├── manifest.json        # MV3 清单
 │   └── background.js        # 读取 Cookie 并 POST 到本机桥接端口
 ├── extensions/              # 启动时自动加载的扩展目录（.gitkeep 占位）
-├── scripts/                 # 发布 / 调试辅助脚本（含 make-tray-icon.mjs：重新生成菜单栏图标）
+├── scripts/                 # 辅助脚本：publish.mjs 一键发版 / make-tray-icon.mjs 生成菜单栏图标
 ├── .github/workflows/       # GitHub Actions：构建 + 发版 + 插件打包
 ├── README.md
 ├── RELEASE_NOTES.md
