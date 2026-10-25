@@ -31,6 +31,11 @@ const DRAFT = ARGS.includes('--draft');
 const WAIT = !ARGS.includes('--no-wait');
 
 const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+// 有些本机代理只放行 api.github.com，对 github.com:443 的 CONNECT 会返回 502，
+// 此时 git 走直连反而能通。重试时去掉这几个环境变量作为回退。
+const NO_PROXY_ENV = Object.fromEntries(
+  Object.entries(GIT_ENV).filter(([k]) => !/^(https?_proxy|all_proxy)$/i.test(k))
+);
 
 const log = (m) => console.log(`\n==> ${m}`);
 const step = (m) => console.log(`    ${m}`);
@@ -43,15 +48,29 @@ function die(msg, hint) {
 }
 
 /** 跑 git 命令，返回 { ok, out, err }（需要自己判断成败时用） */
-function gitTry(args) {
+function gitTry(args, env = GIT_ENV) {
   const ps = spawnSync('git', args, {
     cwd: ROOT,
     encoding: 'utf8',
-    env: GIT_ENV,
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 64 * 1024 * 1024,
   });
   return { ok: ps.status === 0, out: (ps.stdout || '').trim(), err: (ps.stderr || '').trim() };
+}
+
+/**
+ * 需要联网的 git 操作：先按原环境跑，失败后换直连重试（见 NO_PROXY_ENV 的注释）
+ * 返回最后一次的 { ok, out, err }
+ */
+async function gitNet(args, { attempts = 3, waitMs = 4000 } = {}) {
+  let last = null;
+  for (let i = 0; i < attempts; i++) {
+    last = gitTry(args, i === 0 ? GIT_ENV : NO_PROXY_ENV);
+    if (last.ok) return last;
+    if (i < attempts - 1) await sleep(waitMs);
+  }
+  return last;
 }
 
 /** 跑 git 命令，失败即退出（大多数检查用这个） */
@@ -115,19 +134,10 @@ if (dirty) {
 
 log('同步远端');
 // GitHub 的 HTTPS 在部分网络下会偶发 schannel / CONNECT 502，重试几次再决定是否降级
-let fetched = false;
-let lastFetchError = '';
-for (const wait of [0, 3000, 6000, 10000]) {
-  if (wait) await sleep(wait);
-  const r = gitTry(['fetch', '--tags', 'origin']);
-  if (r.ok) {
-    fetched = true;
-    break;
-  }
-  lastFetchError = r.err;
-}
+const fetchResult = await gitNet(['fetch', '--tags', 'origin'], { attempts: 3, waitMs: 4000 });
+const fetched = fetchResult.ok;
 if (!fetched) {
-  step('拉取远端失败，改用本地缓存的 origin/main 判断是否同步：' + lastFetchError.split('\n')[0]);
+  step('拉取远端失败，改用本地缓存的 origin/main 判断是否同步：' + fetchResult.err.split('\n')[0]);
 }
 const localSha = git(['rev-parse', 'main']);
 const remoteSha = git(['rev-parse', 'origin/main'], { allowFail: true });
@@ -145,9 +155,9 @@ step(`main @ ${localSha.slice(0, 7)} 已与远端一致`);
 // tag 不能已存在（本地 / 远端都不要），避免覆盖已发布的版本
 const tagLocal = git(['tag', '-l', TAG]);
 if (tagLocal) die(`本地已存在 tag ${TAG}`, '发新版请先把 package.json 的 version 递增');
-const tagRemote = git(['ls-remote', '--tags', 'origin', `refs/tags/${TAG}`], { allowFail: true });
-// ls-remote 失败（网络抖动）时返回 null：交给后面推送 tag 失败来兜底
-if (tagRemote) die(`远端已存在 tag ${TAG}`, '该版本已发布过，直接改版本号');
+const tagRemote = await gitNet(['ls-remote', '--tags', 'origin', `refs/tags/${TAG}`]);
+// ls-remote 失败（网络抖动）时拿不到结果：交给后面推送 tag 失败来兜底
+if (tagRemote.ok && tagRemote.out) die(`远端已存在 tag ${TAG}`, '该版本已发布过，直接改版本号');
 
 step(`版本 ${VERSION} → tag ${TAG}`);
 
@@ -210,7 +220,7 @@ if (DRY) {
 
 log(`创建并推送 tag ${TAG}`);
 git(['tag', '-a', TAG, '-m', `${TAG} — ${heading.replace(/^#+\s*/, '') || 'release'}`]);
-const pushed = gitTry(['push', 'origin', TAG]);
+const pushed = await gitNet(['push', 'origin', TAG], { attempts: 4, waitMs: 6000 });
 if (!pushed.ok) {
   // 推送失败就回收本地 tag，避免下次运行被「本地已存在 tag」挡住
   gitTry(['tag', '-d', TAG]);
