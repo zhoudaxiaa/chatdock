@@ -323,32 +323,79 @@ const IS_MAC = process.platform === 'darwin';
 // 层级用 'floating'：高于普通窗口，但不去抢任务栏 / 独占全屏程序的位置。
 const TOP_LEVEL = 'floating';
 
-function setTopmost(on) {
+// 只负责「窗口层级」这一件事：开销小，可以反复调用，不会让窗口闪一下。
+function setLevel(on) {
   if (!win || win.isDestroyed()) return;
   try {
     win.setAlwaysOnTop(!!on, TOP_LEVEL);
-    // macOS 上置顶窗口只对“当前桌面(Spaces)”生效，切到别的桌面 / 全屏应用时
-    // 看起来就像置顶失效了。开启时让它在所有桌面（含全屏应用之上）都可见，关闭时恢复。
-    if (IS_MAC && typeof win.setVisibleOnAllWorkspaces === 'function') {
-      win.setVisibleOnAllWorkspaces(!!on, { visibleOnFullScreen: !!on });
-    }
   } catch (err) {
-    console.warn('[置顶] 设置失败：' + err.message);
+    console.warn('[置顶] 设置层级失败：' + err.message);
   }
+}
+
+// 「跨桌面可见」单独拆出来，因为它是 macOS 上唯一有副作用的调用。
+// 按 Electron 文档：setVisibleOnAllWorkspaces 默认会在 UIElementApplication 与
+// ForegroundApplication 之间做一次进程类型转换，而每次转换都会把窗口和 Dock
+// 短暂隐藏一下。窗口层级是 floating 只代表「比普通窗口高」，
+// 一旦在唤起过程中被这么藏一下再放回来，AppKit 会重新排一次窗口顺序，
+// orderFront 就落空了 —— 表现正是「置顶开关明明开着，窗口却被别的应用压住；
+// 手动关一下再开又好了」（手动开关时没有 show 的时序竞争，转换完自然回到最前）。
+// 所以这里立两条规矩：
+//   1. 只在「置顶开关真的变化 / 启动时」调一次，绝不放进每次 show 的路径；
+//   2. 传 skipTransformProcessType 跳过进程类型转换。
+// 代价是压不住别人的全屏应用（那项能力本身就依赖把 app 降级成 accessory，
+// 会让 Dock 图标消失、窗口也抢不到键盘焦点）。稳定压过同桌面的普通窗口更重要。
+function applyWorkspacesVisible(on) {
+  if (!IS_MAC || !win || win.isDestroyed()) return;
+  if (typeof win.setVisibleOnAllWorkspaces !== 'function') return;
+  try {
+    win.setVisibleOnAllWorkspaces(!!on, {
+      visibleOnFullScreen: false,
+      skipTransformProcessType: true
+    });
+  } catch (err) {
+    console.warn('[置顶] 设置跨桌面可见失败：' + err.message);
+  }
+}
+
+// 置顶开关变化 / 启动时用：层级 + 跨桌面可见一起应用
+function setTopmost(on) {
+  setLevel(on);
+  applyWorkspacesVisible(on);
+}
+
+// 把窗口强行提到本层最前。
+// 关键：setAlwaysOnTop 在层级没变化时是个「无操作」—— 它只改 window level，
+// 不会重新排序，所以顶不开压在上面的同层窗口；真正把窗口提前的是 orderFront
+// （Electron 的 moveTop 走 orderWindowByShuffling）。
+function nudgeToFront() {
+  if (!win || win.isDestroyed() || !win.isVisible()) return;
+  try {
+    if (typeof win.moveTop === 'function') win.moveTop();
+  } catch { /* 忽略 */ }
+}
+
+// 重新确立「浮在最上面」：层级 + 立刻顶一次 + 延迟再顶一次。
+// macOS 会在本轮 runloop 末尾再重排一次窗口顺序，所以同步顶完还要补一枪才稳。
+function promote() {
+  if (!win || win.isDestroyed()) return;
+  if (!settings || !settings.alwaysOnTopOnShow) return;
+  setLevel(true);
+  nudgeToFront();
+  setTimeout(nudgeToFront, 80);
 }
 
 // 把主窗口显示到最前面（最小化则先还原），并按设置决定是否置顶
 function raiseWindow() {
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
-  const topmost = !!settings.alwaysOnTopOnShow;
   win.show();
   win.focus();
   // macOS 上 hide→show 会把窗口层级重置回普通层（always-on-top 丢失），
-  // 所以置顶必须在 show() **之后**再压一次；Windows 上提前压也没有副作用。
-  // 这里统一在显示后再设置，macOS / Windows 都生效。
-  if (topmost) setTopmost(true);
-  if (topmost && typeof win.moveTop === 'function') win.moveTop();
+  // 所以置顶必须在 show() **之后**再压一次。这里只碰 level 和 orderFront，
+  // 不碰 setVisibleOnAllWorkspaces —— 那个会进程类型转换、把窗口短暂藏起来，
+  // 跟 show() 挤在同一个时序里正是「偶发不置顶」的来源。
+  promote();
   focusChat();
 }
 
@@ -356,6 +403,9 @@ function raiseWindow() {
 function setTopmostSetting(on) {
   settings.alwaysOnTopOnShow = !!on;
   setTopmost(settings.alwaysOnTopOnShow);
+  // 光改 level 不会让窗口跳到同层最前，还得 orderFront 一次 ——
+  // 这也正是「手动关一下再开就好了」的原因，现在把这一步补上，不必再手动开关
+  if (settings.alwaysOnTopOnShow) nudgeToFront();
   const saved = settingsLib.saveSettings(SETTINGS_FILE, settings);
   if (!saved.ok) console.warn('[置顶] 保存设置失败：' + saved.error);
   if (barView && !barView.webContents.isDestroyed()) {
@@ -401,11 +451,14 @@ function createWindow() {
   ['resize', 'enter-full-screen', 'leave-full-screen', 'maximize', 'unmaximize', 'restore']
     .forEach(ev => win.on(ev, layoutViews));
 
-  // macOS 上 hide→show 会重置窗口层级，任何路径把窗口显示出来都重新压一次置顶，
-  // 保证“置顶”开关在任何唤起方式下都真正生效
-  win.on('show', () => {
-    if (settings && settings.alwaysOnTopOnShow) setTopmost(true);
-  });
+  // macOS 上 hide→show 会重置窗口层级，任何路径把窗口亮出来都要重新压一次：
+  // 热键唤起、托盘点击、点 Dock、从最小化恢复、退出全屏都算。
+  // 这里只走 promote()（改 level + orderFront），不碰跨桌面可见，
+  // 避免把「进程类型转换 → 窗口短暂隐藏」塞进 show 的时序里。
+  const onBecomeVisible = () => promote();
+  win.on('show', onBecomeVisible);
+  win.on('restore', onBecomeVisible);
+  win.on('leave-full-screen', onBecomeVisible);
 
   // 自绘的最大化按钮需要知道自己当前该显示「最大化」还是「还原」
   const notifyMaximized = () => {
@@ -453,6 +506,10 @@ function createWindow() {
     .catch(err => logStartupError('loadBar', err));
 
   wc.loadURL(START_URL);
+  // 首次应用完整的置顶策略（层级 + 跨桌面可见）。放在 show 之前调用，
+  // 这样 mac 上那次进程类型转换发生在窗口还不可见的时候，用户看不到闪。
+  // 之后只有置顶开关真的变化时才会再动 setVisibleOnAllWorkspaces。
+  setTopmost(!!settings.alwaysOnTopOnShow);
   // 首次显示也走同一套置顶逻辑，保证启动就是最前面那一层
   raiseWindow();
 
@@ -640,8 +697,25 @@ function applyGlobalShortcuts(shortcuts, strict = false) {
 // ===== 区域截图（electron-screenshots）=====
 let screenshots = null;     // 懒创建：第一次截图时才加载，不拖慢启动
 let capture = null;         // 进行中的截图上下文 { wasVisible, t }
+let topmostSuspended = false; // 是否是「截图期间临时关掉了置顶」，结束时必须还回去
 
 const delay = (ms) => new Promise(r => setTimeout(r, ms));
+
+// 截图期间临时取消置顶：截图层本身也是置顶窗口，主窗口压在上面就框选不了。
+// 用独立标记记住「是我们临时关的」——以前靠 showMainWindow() 顺带恢复，
+// 一旦截图流程没走到那一步（库没发 cancel / save 事件、或超过 2 分钟限制后重入
+// 把 capture 覆盖掉），置顶就一直是关的，表现同样是「偶发置顶失效」。
+function suspendTopmost() {
+  if (!settings || !settings.alwaysOnTopOnShow || topmostSuspended) return;
+  topmostSuspended = true;
+  setLevel(false);
+}
+
+function resumeTopmost() {
+  if (!topmostSuspended) return;
+  topmostSuspended = false;
+  promote();
+}
 
 function getScreenshots() {
   if (screenshots) return screenshots;
@@ -671,6 +745,8 @@ function getScreenshots() {
 async function startScreenshot() {
   // 防止连按热键重复触发；超过 2 分钟视为上一次异常中断，允许重新开始
   if (capture && Date.now() - capture.t < 120000) return;
+  // 上一次是异常中断（超时重入）：先把临时取消的置顶还回去，再开始新的
+  if (topmostSuspended) resumeTopmost();
   const ctx = capture = {
     wasVisible: !!(win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()),
     t: Date.now()
@@ -681,13 +757,14 @@ async function startScreenshot() {
       await delay(250);      // 等窗口真正从屏幕上消失，否则会被截进去
     } else if (ctx.wasVisible && settings.alwaysOnTopOnShow) {
       // 不隐藏窗口时，置顶的主窗口会把截图层（也是置顶窗口）压在下面，
-      // 框选时看不清也点不到 —— 截屏期间先临时取消置顶，结束后 showMainWindow 会恢复。
-      setTopmost(false);
+      // 框选时看不清也点不到 —— 截屏期间先临时取消置顶，结束由 resumeTopmost() 还回去。
+      suspendTopmost();
     }
     await getScreenshots().startCapture();
   } catch (err) {
     logStartupError('screenshot', err);
     capture = null;
+    resumeTopmost();
     if (ctx.wasVisible) showMainWindow();
   }
 }
@@ -697,6 +774,8 @@ async function finishCapture(copied) {
   const ctx = capture;
   capture = null;
   if (!ctx) return;
+  // 先无条件还原置顶，后面无论怎么提前 return 都不会把它漏成「关着的」
+  resumeTopmost();
   const wantPaste = copied && settings.autoPasteAfterCapture;
   if (!ctx.wasVisible && !wantPaste) return;   // 原本就藏着、也不需要粘贴：保持原样
   await delay(150);                            // 等截图层完全收起
@@ -760,8 +839,12 @@ function openSettings() {
   if (settings.alwaysOnTopOnShow) {
     try {
       sw.setAlwaysOnTop(true, TOP_LEVEL);
+      // 同样跳过进程类型转换：设置窗口每次打开都转换一次，会连带把主窗口一起藏一下
       if (IS_MAC && typeof sw.setVisibleOnAllWorkspaces === 'function') {
-        sw.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+        sw.setVisibleOnAllWorkspaces(true, {
+          visibleOnFullScreen: false,
+          skipTransformProcessType: true
+        });
       }
     } catch { /* 忽略 */ }
   }
@@ -776,7 +859,13 @@ function openSettings() {
     if (!r.ok) console.warn('[热键] 恢复失败:', r.error);
   };
   sw.on('blur', resume);
-  sw.on('closed', () => { settingsWin = null; resume(); });
+  sw.on('closed', () => {
+    settingsWin = null;
+    resume();
+    // 设置窗口关掉后把主窗口重新顶回最前：两个窗口同在 floating 层，
+    // 关掉一个之后 AppKit 不一定会把另一个重新提到前面
+    promote();
+  });
 
   sw.loadFile(path.join(__dirname, 'settings.html'))
     .catch(err => logStartupError('loadSettings', err));
@@ -806,13 +895,17 @@ ipcMain.handle('settings:save', (e, raw) => {
   settings = v.value;
   // 置顶开关改动立即生效，不必重启；设置窗口自己也要跟着置顶，
   // 否则它会被刚刚变成置顶的主窗口盖住（保存有警告时窗口不会自动关闭）
-  setTopmost(settings.alwaysOnTopOnShow);
+  // 只在开关真的变了才动层级：这个调用带进程类型转换，会闪一下窗口
+  if (!!previous.alwaysOnTopOnShow !== !!settings.alwaysOnTopOnShow) {
+    setTopmost(settings.alwaysOnTopOnShow);
+  }
   if (settingsWin && !settingsWin.isDestroyed()) {
     try {
       settingsWin.setAlwaysOnTop(settings.alwaysOnTopOnShow, TOP_LEVEL);
       if (IS_MAC && typeof settingsWin.setVisibleOnAllWorkspaces === 'function') {
         settingsWin.setVisibleOnAllWorkspaces(settings.alwaysOnTopOnShow, {
-          visibleOnFullScreen: !!settings.alwaysOnTopOnShow
+          visibleOnFullScreen: false,
+          skipTransformProcessType: true
         });
       }
       settingsWin.moveTop();
@@ -948,6 +1041,13 @@ if (!gotSingleInstanceLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
+    if (app.isReady()) showMainWindow();
+  });
+
+  // macOS 点 Dock 图标回来时补一条唤起路径。
+  // 窗口被 hide() 过之后系统不会自动再显示，而「点 Dock 没反应 / 窗口回来但不置顶」
+  // 正是这条缺失路径的典型表现 —— 顺手也能把层级重新压一次。
+  app.on('activate', () => {
     if (app.isReady()) showMainWindow();
   });
 

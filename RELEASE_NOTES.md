@@ -23,7 +23,7 @@ ChatGPT 桌面壳首个正式版：全局热键唤起、窗口置顶、区域截
 ### 🐞 修复与加固
 
 - **唤起后被其他窗口盖住**：此前窗口从未设置过置顶，Windows 的前台锁会让 `show()` 出来的窗口只闪一下任务栏。现在唤起时先 `show()` 显示、再 `setAlwaysOnTop` 压层级，并用 `moveTop()` 兜底。
-- **macOS 上置顶无效**：两处 macOS 独有行为导致置顶看起来没生效 —— 一是 `hide()` → `show()` 会把窗口层级重置回普通层，原先在 `show()` 之前设置的置顶被直接冲掉；二是置顶窗口只对当前「桌面（Spaces）」生效，切到别的桌面或全屏应用后就看不到。现在置顶改为在 `show()` **之后**重新压一次（并监听窗口 `show` 事件兜住热键 / 托盘 / 二次启动等所有唤起路径），同时用 `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })` 让窗口在所有桌面（含全屏应用之上）可见。Windows 行为不变。
+- **macOS 上置顶偶发失效**：先是 `hide()` → `show()` 会把窗口层级重置回普通层，置顶必须在 `show()` **之后**再压一次；再是置顶窗口默认只对当前「桌面（Spaces）」生效。上一版为了「浮在全屏应用之上」传了 `visibleOnFullScreen: true`，但 Electron 的 `setVisibleOnAllWorkspaces` 在这个选项下会做一次进程类型转换，**每次调用都会把窗口和 Dock 短暂隐藏**——唤起时正好撞上这次隐藏，`moveTop()` 就落空了，表现就是「置顶开关开着，窗口却被别的应用压住，手动关一下再开又好了」。现在把两件事拆开：窗口层级（`setAlwaysOnTop`）在每次 `show()` 后都可以廉价地重新压一次；跨桌面可见（`setVisibleOnAllWorkspaces`）只在置顶开关真正变化时设置一次，并传 `skipTransformProcessType: true` 跳过类型转换。代价是压不住别人的全屏应用——那项能力本身就要求把进程降级成 accessory，会让 Dock 图标消失、窗口抢不到键盘焦点。同时补齐：`show` / `restore` / `leave-full-screen` / 点 Dock 都会重新确立置顶并 `orderFront`（`setAlwaysOnTop` 在层级未变时不重新排序，顶不开同层窗口）；截图临时取消置顶改用独立标记，结束时无条件还原，避免截图流程异常中断把置顶永久留在关闭状态。Windows 行为不变。
 - **页面顶部一块区域点不了**：`titleBarOverlay` 会让 Windows 把窗口顶部当作标题栏（caption），该区域鼠标事件被窗口层吞掉。现改为隐藏标题栏 + 自绘窗口按钮，鼠标事件全部落到页面里。
 - **登录后左上角一块区域点不了**：chatgpt.com 登录后的界面会给自己的顶部栏加 `-webkit-app-region: drag`，在 Electron 里会把那块区域变成窗口标题栏。现在启动时向页面注入 `*{-webkit-app-region:no-drag !important}`，并在页面加载完成 / SPA 路由切换后重新压一遍。
 - **工具栏左侧点不了**：拖动区曾设在整条工具栏上，标题与左侧留白一并变成窗口非客户区。现在只有中间空白是拖动区。
