@@ -1,4 +1,33 @@
-## v1.0.0
+## v1.0.1
+
+两个 macOS 相关的修复：菜单栏图标改为专用的单色 template 图，窗口置顶不再偶发失效。
+
+### 🐞 修复
+
+- **macOS 菜单栏图标过大**：之前直接把 512×512 的彩色应用图标（绿底 + 白色 AI）交给托盘，被整块塞进 22pt 高的菜单栏，视觉上又大又糊，深色菜单栏下更突兀。现在菜单栏使用独立绘制的单色 template 图（圆角对话气泡 + 左下尾巴 + 内嵌四角星），16pt 画布、四周留 1px 安全边距、100% 纯黑 + alpha 通道，系统会自动染色（浅色模式黑、深色模式白、点选时反色）。随包提供 16 / 32 / 48 三档倍图，Retina 屏使用 @2x。三档图标由 `scripts/make-tray-icon.mjs` 生成（零依赖，手写 PNG 编码 + 有向距离场抗锯齿），可用 `npm run icons:tray` 重新生成并通过预览图校验。Windows / Linux 行为不变，图标缺失时自动回退到彩色图标缩至 16×16。
+
+- **macOS 上置顶偶发失效**：表现是置顶开关明明开着，窗口却被别的应用压住，手动关一下再开又好了。根因是上一版为了「浮在全屏应用之上」传了 `visibleOnFullScreen: true`，而 Electron 的 `setVisibleOnAllWorkspaces` 在这个选项下会做一次进程类型转换，**每次调用都会把窗口和 Dock 短暂隐藏**；唤起流程刚好在 `show()` 之后调用它，紧接着的 `moveTop()` 就落在「窗口正被隐藏」的中间态上，AppKit 收尾重排后窗口又回到后面（此时层级仍是 floating，所以看起来像置顶没生效）。现在把两件事拆开：
+  - 窗口层级（`setAlwaysOnTop`）在每次 `show()` 后廉价地重新压一次；
+  - 跨桌面可见（`setVisibleOnAllWorkspaces`）只在置顶开关真正变化或启动时设置一次，并传 `skipTransformProcessType: true` 跳过进程类型转换。
+
+  代价是不再压在别人的全屏应用之上——那项能力本身就要求把进程降级成 accessory，会让 Dock 图标消失、窗口抢不到键盘焦点，而它正是这次不稳定的来源。同时补齐了四条此前会漏掉置顶的唤起路径（`show` / `restore` / `leave-full-screen` / 点 Dock），以及「截图临时取消置顶后没有还原」的漏洞。Windows 行为不变。
+
+### 📦 资源包
+
+| 类型 | 平台 | 架构 | 文件 |
+| --- | --- | --- | --- |
+| 桌面应用 | Windows | x64 | `ChatGPT Desktop Setup 1.0.1.exe`（NSIS 安装版）、`ChatGPT Desktop 1.0.1.exe`（便携版）、`*.zip` |
+| 桌面应用 | macOS | arm64 | `*.dmg`、`*.zip` |
+| 浏览器扩展 | Chrome / Edge | 通用 | `chatgpt-session-bridge-v*.zip` |
+
+> 登录态与设置保存在 `%APPDATA%\chatgpt-electron`，覆盖安装不会被清除。
+>
+> 默认截图键 `Control + Alt + A` 与微信、QQ 的默认截图键相同，同时运行时先启动的一方生效，可在「设置」中改键。
+>
+> macOS 安装包未签名，首次打开请在「系统设置 → 隐私与安全性」中允许来自不明开发者，或右键 → 打开。
+
+<details>
+<summary>v1.0.0 更新日志</summary>
 
 ChatGPT 桌面壳首个正式版：全局热键唤起、窗口置顶、区域截图、可视化快捷键设置、浏览器登录态同步。
 
@@ -23,7 +52,6 @@ ChatGPT 桌面壳首个正式版：全局热键唤起、窗口置顶、区域截
 ### 🐞 修复与加固
 
 - **唤起后被其他窗口盖住**：此前窗口从未设置过置顶，Windows 的前台锁会让 `show()` 出来的窗口只闪一下任务栏。现在唤起时先 `show()` 显示、再 `setAlwaysOnTop` 压层级，并用 `moveTop()` 兜底。
-- **macOS 上置顶偶发失效**：先是 `hide()` → `show()` 会把窗口层级重置回普通层，置顶必须在 `show()` **之后**再压一次；再是置顶窗口默认只对当前「桌面（Spaces）」生效。上一版为了「浮在全屏应用之上」传了 `visibleOnFullScreen: true`，但 Electron 的 `setVisibleOnAllWorkspaces` 在这个选项下会做一次进程类型转换，**每次调用都会把窗口和 Dock 短暂隐藏**——唤起时正好撞上这次隐藏，`moveTop()` 就落空了，表现就是「置顶开关开着，窗口却被别的应用压住，手动关一下再开又好了」。现在把两件事拆开：窗口层级（`setAlwaysOnTop`）在每次 `show()` 后都可以廉价地重新压一次；跨桌面可见（`setVisibleOnAllWorkspaces`）只在置顶开关真正变化时设置一次，并传 `skipTransformProcessType: true` 跳过类型转换。代价是压不住别人的全屏应用——那项能力本身就要求把进程降级成 accessory，会让 Dock 图标消失、窗口抢不到键盘焦点。同时补齐：`show` / `restore` / `leave-full-screen` / 点 Dock 都会重新确立置顶并 `orderFront`（`setAlwaysOnTop` 在层级未变时不重新排序，顶不开同层窗口）；截图临时取消置顶改用独立标记，结束时无条件还原，避免截图流程异常中断把置顶永久留在关闭状态。Windows 行为不变。
 - **页面顶部一块区域点不了**：`titleBarOverlay` 会让 Windows 把窗口顶部当作标题栏（caption），该区域鼠标事件被窗口层吞掉。现改为隐藏标题栏 + 自绘窗口按钮，鼠标事件全部落到页面里。
 - **登录后左上角一块区域点不了**：chatgpt.com 登录后的界面会给自己的顶部栏加 `-webkit-app-region: drag`，在 Electron 里会把那块区域变成窗口标题栏。现在启动时向页面注入 `*{-webkit-app-region:no-drag !important}`，并在页面加载完成 / SPA 路由切换后重新压一遍。
 - **工具栏左侧点不了**：拖动区曾设在整条工具栏上，标题与左侧留白一并变成窗口非客户区。现在只有中间空白是拖动区。
@@ -31,26 +59,4 @@ ChatGPT 桌面壳首个正式版：全局热键唤起、窗口置顶、区域截
 - **退出入口与退出流程**：顶栏右键、设置页、`Control + Q`、托盘菜单均可退出；`app.quit()` 推迟到当前回调之外执行，避免在输入 / 菜单消息循环里同步销毁窗口造成主线程卡死。新增进程内 6 秒、进程外 9 秒两级兜底，退出耗时约 1.7 秒，退出过程写入 `%APPDATA%\chatgpt-electron\quit.log`。
 - **某个热键被占用会拖累全部设置**：现在只有「本次修改过的键」注册失败才拒绝保存并回滚，未修改的键仅给出警告。
 
-### 📦 资源包
-
-| 类型 | 平台 | 架构 | 文件 |
-| --- | --- | --- | --- |
-| 桌面应用 | Windows | x64 | `ChatGPT Desktop Setup 1.0.0.exe`（NSIS 安装版）、`ChatGPT Desktop 1.0.0.exe`（便携版）、`*.zip` |
-| 桌面应用 | macOS | arm64 | `*.dmg`、`*.zip` |
-| 浏览器扩展 | Chrome / Edge | 通用 | `chatgpt-session-bridge-v*.zip` |
-
-> 登录态与设置保存在 `%APPDATA%\chatgpt-electron`，覆盖安装不会被清除。
->
-> 默认截图键 `Control + Alt + A` 与微信、QQ 的默认截图键相同，同时运行时先启动的一方生效，可在「设置」中改键。
-
-> macOS 安装包未签名，首次打开请在「系统设置 → 隐私与安全性」中允许来自不明开发者，或右键 → 打开。
-
-### 🚀 快速上手
-
-1. 下载对应平台的安装包并安装；
-2. （可选）解压 `chatgpt-session-bridge-v*.zip`，在浏览器中加载扩展，同步浏览器登录态；
-3. 启动后按 `Control + Space` 唤起窗口。
-
-### ⚙️ 构建
-
-由 GitHub Actions 自动构建：Windows x64（`windows-latest`）、macOS arm64（`macos-latest`）、扩展插件包（`ubuntu-latest`），产物自动挂载到本 Release 页面。
+</details>
