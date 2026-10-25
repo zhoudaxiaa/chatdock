@@ -1,4 +1,38 @@
-## v1.0.1
+## v1.0.2
+
+安装包终于用上自己的图标了，另外修掉了几处发版流程上的隐患。
+
+### 🐞 修复
+
+- **安装包图标一直是 Electron 默认 logo**：打包配置里 Windows / macOS 的图标都指向 `build/icon.png`，但这个文件从来没有进过版本库（`.gitignore` 也没排除它，纯粹是没生成过）。CI checkout 后目录里没有它，electron-builder 只会告警并回退到 Electron 默认图标——所以 1.0.0 / 1.0.1 的 `.exe`、`.dmg` 安装后在系统里显示的都是 Electron 的蓝绿 logo。现在改为直接引用仓库里已有的 `icon.png`（512×512，满足 macOS icns ≥ 512、Windows ico ≥ 256 的要求）。
+
+### 🛠 发版流程
+
+- `scripts/publish.mjs` 重写：`npm run release:gh` 一条命令完成「打 tag → 推 tag → 建 Release → 等 CI 出包」。版本号只认 `package.json`，tag 由脚本派生（原先写死在脚本里）；发布前会校验分支、工作区、与远端是否同步、发布说明标题的版本号是否一致、同名 tag / Release 是否存在，任一条不满足直接停下。
+- 不再 `git add -A`、不强推 tag，推送失败会回收本地 tag；Release 通过 REST API 创建，本机不需要装 `gh`。
+- 支持 `--dry-run`（只预览）/ `--draft`（草稿，不触发构建）/ `--no-wait`；默认等待 CI 完成并列出产物，失败时直接给出日志链接。
+- 本机代理不放行 `github.com:443`（CONNECT 返回 502）时，自动去掉代理环境变量改直连重试。
+
+### 📦 资源包
+
+| 类型 | 平台 | 架构 | 文件 |
+| --- | --- | --- | --- |
+| 桌面应用 | Windows | x64 | `ChatGPT Desktop Setup 1.0.2.exe`（NSIS 安装版）、`ChatGPT Desktop 1.0.2.exe`（便携版）、`*.zip` |
+| 桌面应用 | macOS | arm64 | `*.dmg`、`*.zip` |
+| 浏览器扩展 | Chrome / Edge | 通用 | `chatgpt-session-bridge-v*.zip` |
+
+> 已安装 1.0.1 的，直接覆盖安装 1.0.2 即可修正图标，登录态与设置不受影响。
+>
+> 登录态与设置保存在 `%APPDATA%\chatgpt-electron`，覆盖安装不会被清除。
+>
+> 默认截图键 `Control + Alt + A` 与微信、QQ 的默认截图键相同，同时运行时先启动的一方生效，可在「设置」中改键。
+>
+> macOS 安装包未签名，首次打开请在「系统设置 → 隐私与安全性」中允许来自不明开发者，或右键 → 打开。
+
+<details>
+<summary>v1.0.1 更新日志</summary>
+
+### v1.0.1
 
 两个 macOS 相关的修复：菜单栏图标改为专用的单色 template 图，窗口置顶不再偶发失效。
 
@@ -58,5 +92,7 @@ ChatGPT 桌面壳首个正式版：全局热键唤起、窗口置顶、区域截
 - **安装版启动即静默失败**：`extensions/` 目录里的 `.gitkeep` 是点文件，打包时匹配不到，整个空目录没有进入 `app.asar`，启动时 `fs.readdirSync` 抛 `ENOENT` 中断了 `whenReady`。现在目录缺失只记日志并跳过，扩展加载 / 桥接服务 / 托盘 / 热键注册各自独立兜底，异常统一写入 `%APPDATA%\chatgpt-electron\startup-error.log`。
 - **退出入口与退出流程**：顶栏右键、设置页、`Control + Q`、托盘菜单均可退出；`app.quit()` 推迟到当前回调之外执行，避免在输入 / 菜单消息循环里同步销毁窗口造成主线程卡死。新增进程内 6 秒、进程外 9 秒两级兜底，退出耗时约 1.7 秒，退出过程写入 `%APPDATA%\chatgpt-electron\quit.log`。
 - **某个热键被占用会拖累全部设置**：现在只有「本次修改过的键」注册失败才拒绝保存并回滚，未修改的键仅给出警告。
+
+</details>
 
 </details>
