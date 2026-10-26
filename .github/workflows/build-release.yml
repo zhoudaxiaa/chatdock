@@ -1,6 +1,10 @@
 name: Build & Release
 
 on:
+  # 明确的版本发布提交也可直接发布，供连接器推送代码时使用。
+  push:
+    branches: [main]
+    paths: [package.json]
   # 发布 Release 时构建并把产物挂到 Release 页面
   release:
     types: [published]
@@ -18,10 +22,42 @@ env:
   CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
 jobs:
+  release:
+    name: Prepare release
+    if: "github.event_name != 'push' || startsWith(github.event.head_commit.message, 'chore: release v')"
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve and validate version
+        id: meta
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          if [ -n "$RELEASE_TAG" ] && [ "$RELEASE_TAG" != "$TAG" ]; then
+            echo "Release tag does not match package.json" >&2
+            exit 1
+          fi
+          test "$(head -n 1 RELEASE_NOTES.md)" = "## $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - name: Create GitHub Release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" \
+            --title "$RELEASE_TAG" --notes-file RELEASE_NOTES.md
+
   # ---------------------------------------------------------------
   # 1) 浏览器扩展「ChatGPT Session Bridge」插件包
   # ---------------------------------------------------------------
   extension:
+    needs: release
     name: Package extension (chrome zip)
     runs-on: ubuntu-latest
     steps:
@@ -55,7 +91,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.release.tag_name || github.ref_name }}
+          tag_name: ${{ needs.release.outputs.tag }}
           files: dist/*.zip
           fail_on_unmatched_files: true
 
@@ -63,6 +99,7 @@ jobs:
   # 2) 桌面应用安装包：Windows x64 + macOS arm64
   # ---------------------------------------------------------------
   build:
+    needs: release
     name: Build (${{ matrix.target }} / ${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -108,7 +145,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.release.tag_name || github.ref_name }}
+          tag_name: ${{ needs.release.outputs.tag }}
           body_path: RELEASE_NOTES.md
           files: |
             dist/*.exe

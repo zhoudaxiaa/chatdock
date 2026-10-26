@@ -320,48 +320,51 @@ const IS_MAC = process.platform === 'darwin';
 // 实际仍被当前应用盖住 —— 表现就是「按了快捷键，窗口没出来 / 出来了但被挡住」。
 // 所以统一走 raiseWindow()：先 show 显示，再 setAlwaysOnTop 压层级，最后 moveTop() 兜底
 // （顺序很重要：macOS 上 hide→show 会重置窗口层级，置顶必须在 show 之后再设置）。
-// 层级用 'floating'：高于普通窗口，但不去抢任务栏 / 独占全屏程序的位置。
+// floating 负责窗口层级；macOS 全屏 Space 的可见性由下面的工作区配置负责。
 const TOP_LEVEL = 'floating';
+const workspaceVisibility = new WeakMap();
 
 // 只负责「窗口层级」这一件事：开销小，可以反复调用，不会让窗口闪一下。
-function setLevel(on) {
-  if (!win || win.isDestroyed()) return;
+function setLevel(on, target = win) {
+  if (!target || target.isDestroyed()) return;
   try {
-    win.setAlwaysOnTop(!!on, TOP_LEVEL);
+    target.setAlwaysOnTop(!!on, TOP_LEVEL);
   } catch (err) {
     console.warn('[置顶] 设置层级失败：' + err.message);
   }
 }
 
-// 「跨桌面可见」单独拆出来，因为它是 macOS 上唯一有副作用的调用。
-// 按 Electron 文档：setVisibleOnAllWorkspaces 默认会在 UIElementApplication 与
-// ForegroundApplication 之间做一次进程类型转换，而每次转换都会把窗口和 Dock
-// 短暂隐藏一下。窗口层级是 floating 只代表「比普通窗口高」，
-// 一旦在唤起过程中被这么藏一下再放回来，AppKit 会重新排一次窗口顺序，
-// orderFront 就落空了 —— 表现正是「置顶开关明明开着，窗口却被别的应用压住；
-// 手动关一下再开又好了」（手动开关时没有 show 的时序竞争，转换完自然回到最前）。
-// 所以这里立两条规矩：
-//   1. 只在「置顶开关真的变化 / 启动时」调一次，绝不放进每次 show 的路径；
-//   2. 传 skipTransformProcessType 跳过进程类型转换。
-// 代价是压不住别人的全屏应用（那项能力本身就依赖把 app 降级成 accessory，
-// 会让 Dock 图标消失、窗口也抢不到键盘焦点）。稳定压过同桌面的普通窗口更重要。
-function applyWorkspacesVisible(on) {
-  if (!IS_MAC || !win || win.isDestroyed()) return;
-  if (typeof win.setVisibleOnAllWorkspaces !== 'function') return;
+// 全屏应用位于独立的 Space，单独设置 always-on-top 无法跨过去。
+// 允许 Electron 执行默认的进程类型转换，才能正确加入全屏 Space。
+// 转换可能短暂隐藏窗口和 Dock，因此按窗口缓存状态，只在初次配置 / 开关变化时调用。
+function applyWorkspacesVisible(on, target = win) {
+  if (!IS_MAC || !target || target.isDestroyed()) return;
+  if (typeof target.setVisibleOnAllWorkspaces !== 'function') return;
+  const visible = !!on;
+  if (workspaceVisibility.get(target) === visible) return;
   try {
-    win.setVisibleOnAllWorkspaces(!!on, {
-      visibleOnFullScreen: false,
-      skipTransformProcessType: true
+    target.setVisibleOnAllWorkspaces(visible, {
+      visibleOnFullScreen: visible
     });
+    workspaceVisibility.set(target, visible);
   } catch (err) {
     console.warn('[置顶] 设置跨桌面可见失败：' + err.message);
   }
 }
 
-// 置顶开关变化 / 启动时用：层级 + 跨桌面可见一起应用
+function setWindowTopmost(target, on) {
+  // 先完成可能重排窗口的进程转换，再恢复窗口层级。
+  applyWorkspacesVisible(on, target);
+  setLevel(on, target);
+}
+
+// 主窗口、设置窗口共享同一策略，所有入口切换置顶时同步更新。
 function setTopmost(on) {
-  setLevel(on);
-  applyWorkspacesVisible(on);
+  // 进程转换影响整个应用，先完成两个窗口的工作区配置，再统一恢复层级。
+  applyWorkspacesVisible(on, win);
+  applyWorkspacesVisible(on, settingsWin);
+  setWindowTopmost(win, on);
+  setWindowTopmost(settingsWin, on);
 }
 
 // 把窗口强行提到本层最前。
@@ -405,7 +408,7 @@ function setTopmostSetting(on) {
   setTopmost(settings.alwaysOnTopOnShow);
   // 光改 level 不会让窗口跳到同层最前，还得 orderFront 一次 ——
   // 这也正是「手动关一下再开就好了」的原因，现在把这一步补上，不必再手动开关
-  if (settings.alwaysOnTopOnShow) nudgeToFront();
+  if (settings.alwaysOnTopOnShow) promote();
   const saved = settingsLib.saveSettings(SETTINGS_FILE, settings);
   if (!saved.ok) console.warn('[置顶] 保存设置失败：' + saved.error);
   if (barView && !barView.webContents.isDestroyed()) {
@@ -416,6 +419,7 @@ function setTopmostSetting(on) {
 
 function createWindow() {
   win = new BrowserWindow({
+    show: false,
     width: 1280,
     height: 860,
     minWidth: 480,
@@ -814,10 +818,12 @@ function openSettings() {
   if (settingsWin && !settingsWin.isDestroyed()) {
     if (settingsWin.isMinimized()) settingsWin.restore();
     settingsWin.show();
+    setLevel(settings.alwaysOnTopOnShow, settingsWin);
     settingsWin.focus();
     return;
   }
   settingsWin = new BrowserWindow({
+    show: false,
     width: 620,
     height: 720,          // 小屏也能放下；内容超出时设置页内部自行滚动
     minWidth: 520,
@@ -836,18 +842,8 @@ function openSettings() {
   const sw = settingsWin;
   sw.setMenuBarVisibility(false);
   // 主窗口置顶时设置窗口也要置顶，否则它会被主窗口盖住、点都点不到
-  if (settings.alwaysOnTopOnShow) {
-    try {
-      sw.setAlwaysOnTop(true, TOP_LEVEL);
-      // 同样跳过进程类型转换：设置窗口每次打开都转换一次，会连带把主窗口一起藏一下
-      if (IS_MAC && typeof sw.setVisibleOnAllWorkspaces === 'function') {
-        sw.setVisibleOnAllWorkspaces(true, {
-          visibleOnFullScreen: false,
-          skipTransformProcessType: true
-        });
-      }
-    } catch { /* 忽略 */ }
-  }
+  setWindowTopmost(sw, settings.alwaysOnTopOnShow);
+  sw.on('show', () => setLevel(settings.alwaysOnTopOnShow, sw));
   lockLocalPage(sw.webContents);
 
   // 录入快捷键时，已注册的全局热键会被系统先吞掉（按 Ctrl+Alt+A 会直接触发截图，
@@ -869,6 +865,8 @@ function openSettings() {
 
   sw.loadFile(path.join(__dirname, 'settings.html'))
     .catch(err => logStartupError('loadSettings', err));
+  sw.show();
+  sw.focus();
 }
 
 const fromSettingsWin = (e) => !!settingsWin && !settingsWin.isDestroyed() && e.sender === settingsWin.webContents;
@@ -901,13 +899,7 @@ ipcMain.handle('settings:save', (e, raw) => {
   }
   if (settingsWin && !settingsWin.isDestroyed()) {
     try {
-      settingsWin.setAlwaysOnTop(settings.alwaysOnTopOnShow, TOP_LEVEL);
-      if (IS_MAC && typeof settingsWin.setVisibleOnAllWorkspaces === 'function') {
-        settingsWin.setVisibleOnAllWorkspaces(settings.alwaysOnTopOnShow, {
-          visibleOnFullScreen: false,
-          skipTransformProcessType: true
-        });
-      }
+      setWindowTopmost(settingsWin, settings.alwaysOnTopOnShow);
       settingsWin.moveTop();
     } catch { /* 忽略 */ }
   }
@@ -915,6 +907,8 @@ ipcMain.handle('settings:save', (e, raw) => {
   if (!saved.ok) {
     // 配置文件写不进去：回滚内存和热键，避免“本次能用、重启就丢”的假象
     settings = previous;
+    setTopmost(previous.alwaysOnTopOnShow);
+    promote();
     applyGlobalShortcuts(previous.shortcuts, true);
     return { ok: false, error: '保存配置文件失败：' + saved.error };
   }
