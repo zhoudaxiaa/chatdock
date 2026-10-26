@@ -1,3 +1,5 @@
+import './shared/providers.js';
+const { providers, normalizeProviderUrl, resolveProviderUrls } = globalThis.ChatDockProviders;
 /**
  * Simple ChatGPT Sidebar — options page logic (ES module).
  *
@@ -74,7 +76,8 @@ async function loadSettings() {
   const stored = await chrome.storage.sync.get([
     'pagePrompts',
     'selectionPrompts',
-    'autoSubmit'
+    'autoSubmit',
+    'claudeFullUi'
   ]);
 
   pagePrompts = Array.isArray(stored.pagePrompts) ? stored.pagePrompts : clonePagePrompts();
@@ -83,6 +86,7 @@ async function loadSettings() {
     : cloneSelectionPrompts();
 
   autoSubmitToggle.checked = stored.autoSubmit === true;
+  document.getElementById('claude-full-ui').checked = stored.claudeFullUi !== false;
 
   // The bridge stores its own three keys; readBridgeConfig already applies the
   // defaults, so the inputs always show the value that will actually be used.
@@ -91,6 +95,8 @@ async function loadSettings() {
   bridgeUrlInput.value = bridge.url;
   bridgeTokenInput.value = bridge.token;
 
+  const storedUrls = await chrome.storage.sync.get('providerUrls');
+  renderProviderUrls(storedUrls.providerUrls);
   renderAll();
 }
 
@@ -413,27 +419,45 @@ autoSubmitToggle.addEventListener('change', async () => {
 
 // --- Desktop session bridge --------------------------------------------------
 
-/** Turns a syncSession() result into something a human can act on. */
+/** Each service reports its own outcome, including harmless empty cookie jars. */
 function describeSync(result) {
   if (!result) return '没有拿到同步结果，重载扩展后再试';
-
-  if (result.ok) return `已同步 ${result.count} 个 Cookie`;
-
-  switch (result.reason) {
-    case 'empty':
-      return '浏览器里没有当前服务的 Cookie，请先在对应网站登录';
-    case 'network':
-      return '连不上桌面端，确认 Electron 已在监听这个地址';
-    case 'http':
-      return result.status === 401 || result.status === 403
-        ? `令牌不匹配（HTTP ${result.status}）`
-        : `桌面端返回 HTTP ${result.status}`;
-    case 'cookie-api':
-      return '读取 Cookie 失败，确认扩展的 cookies 权限还在';
-    default:
-      return '同步失败，后台控制台里有详细原因';
-  }
+  const describeOne = item => {
+    if (item.reason === 'empty') return '无 Cookie，已跳过';
+    if (item.ok) return `已同步 ${item.count} 个 Cookie${item.refreshed ? '，桌面页面已刷新' : ''}`;
+    if (item.reason === 'network') return '无法连接桌面端';
+    if (item.reason === 'http') return `桌面端返回 HTTP ${item.status}`;
+    if (item.reason === 'cookie-api') return '读取 Cookie 失败';
+    return '同步失败';
+  };
+  if (result.results) return Object.entries(result.results).map(([id, item]) => `${providers[id].label}：${describeOne(item)}`).join('；');
+  return describeOne(result);
 }
+
+function renderProviderUrls(stored) {
+  const urls = resolveProviderUrls(stored);
+  document.getElementById('chatgpt-url').value = urls.chatgpt;
+  document.getElementById('claude-url').value = urls.claude;
+}
+document.getElementById('save-provider-urls').addEventListener('click', async () => {
+  const status = document.getElementById('provider-url-status');
+  try {
+    const providerUrls = {
+      chatgpt: normalizeProviderUrl('chatgpt', document.getElementById('chatgpt-url').value),
+      claude: normalizeProviderUrl('claude', document.getElementById('claude-url').value)
+    };
+    await chrome.storage.sync.set({ providerUrls });
+    renderProviderUrls(providerUrls);
+    status.textContent = '已保存，侧边栏地址已更新';
+  } catch (error) { status.textContent = error.message; }
+});
+document.getElementById('reset-provider-urls').addEventListener('click', async () => {
+  try {
+    await chrome.storage.sync.remove('providerUrls');
+    renderProviderUrls();
+    document.getElementById('provider-url-status').textContent = '已恢复默认地址';
+  } catch (error) { document.getElementById('provider-url-status').textContent = error.message; }
+});
 
 async function persistBridge() {
   await chrome.storage.sync.set({
@@ -543,4 +567,16 @@ document.getElementById('import-file').addEventListener('change', async event =>
     showToast('已导入提示词');
   } catch (err) { showToast('导入失败：' + err.message); }
   finally { event.target.value = ''; }
+});
+
+
+document.getElementById('claude-full-ui').addEventListener('change', async event => {
+  const enabled = event.target.checked;
+  try {
+    await chrome.storage.sync.set({ claudeFullUi: enabled });
+    showToast(enabled ? '已启用 Claude 完整导航兼容，Claude 页面将重新加载' : '已恢复 Claude 原始嵌入布局');
+  } catch (error) {
+    event.target.checked = !enabled;
+    showToast('保存失败：' + error.message);
+  }
 });

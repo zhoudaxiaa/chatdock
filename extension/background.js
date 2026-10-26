@@ -33,7 +33,7 @@ import {
 } from './shared/defaults.js';
 import { formatPagePrompt, formatSelectionPrompt, stripEmptyLabels } from './shared/template.js';
 import { resolvePageInfo } from './shared/page-info.js';
-import { readBridgeConfig, syncSession } from './session-bridge.js';
+import { readBridgeConfig, syncAllSessions } from './session-bridge.js';
 
 // =============================================================================
 // Constants
@@ -438,13 +438,13 @@ function flashIcon(text, color = '#c0392b') {
 
 /** Flashes the outcome on the toolbar icon for four seconds. */
 function showSyncBadge(result) {
-  const text = result.ok ? '✓' : result.reason === 'empty' ? '0' : '!';
+  const text = result.reason === 'empty' ? '0' : result.ok ? '✓' : '!';
   flashIcon(text, result.ok ? '#10a37f' : '#c0392b');
 }
 
 /** Manual sync: always reports, because the user asked for it. */
 async function runSync() {
-  const result = await syncSession(undefined, (await activeProvider()).id);
+  const result = await syncAllSessions();
   showSyncBadge(result);
   return result;
 }
@@ -457,10 +457,8 @@ async function autoSync() {
   const config = await readBridgeConfig();
   if (!config.auto) return;
 
-  for (const provider of ['chatgpt', 'claude']) {
-    const result = await syncSession(config, provider);
-    if (!result.ok) console.info('[sidebar] session bridge skipped:', provider, result.reason);
-  }
+  const result = await syncAllSessions(config);
+  if (!result.ok) console.info('[sidebar] session bridge incomplete:', result.results);
 }
 
 // =============================================================================

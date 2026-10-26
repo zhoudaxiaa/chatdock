@@ -366,23 +366,27 @@
       }
     }
     body { display: flex; flex-direction: column; }
-    .provider-bar { display: flex; gap: 4px; align-items: center; padding: 7px 8px; border-bottom: 1px solid var(--btn-hover-border); flex-shrink: 0; }
+    .provider-bar { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 7px 8px; border-bottom: 1px solid var(--btn-hover-border); flex-shrink: 0; }
+    .provider-choice { display: inline-flex; align-items: center; gap: 0; border: 1px solid transparent; border-radius: 8px; }
+    .provider-choice:has([aria-pressed="true"]) { background: var(--btn-hover); border-color: var(--btn-hover-border); }
     .provider-bar button { border: 0; background: transparent; color: var(--text-strong); padding: 7px 9px; border-radius: 7px; cursor: pointer; font: 12px system-ui; }
-    .provider-bar button:hover, .provider-bar button[aria-pressed="true"] { background: var(--btn-hover); }
+    .provider-bar button:hover { background: var(--btn-hover); }
     .provider-bar button[aria-pressed="true"] { font-weight: 650; }
-    .brand { font: 600 12px system-ui; color: var(--text-hint); margin-right: 4px; }
-    .provider-bar .spacer { flex: 1; }
+    .provider-bar .open-provider { display: inline-flex; align-items: center; justify-content: center; width: 25px; height: 28px; padding: 4px; margin-right: 2px; color: var(--text-hint); }
+    .open-provider svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
     .provider-frame[hidden] { display: none; }
   </style>
 </head>
 <body>
   <nav class="provider-bar" aria-label="聊天服务">
-    <span class="brand">ChatDock</span>
-    <button data-provider="chatgpt" aria-pressed="true">ChatGPT</button>
-    <button data-provider="claude" aria-pressed="false">Claude</button>
-    <span class="spacer"></span>
-    <button id="open-tab" title="在新标签页打开当前服务" aria-label="在新标签页打开">↗</button>
-    <button id="settings" title="设置" aria-label="设置">⚙</button>
+    <span class="provider-choice">
+      <button data-provider="chatgpt" aria-pressed="true">ChatGPT</button>
+      <button data-open-provider="chatgpt" class="open-provider" title="在新标签页打开 ChatGPT" aria-label="在新标签页打开 ChatGPT"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M21 3L10 14"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg></button>
+    </span>
+    <span class="provider-choice">
+      <button data-provider="claude" aria-pressed="false">Claude</button>
+      <button data-open-provider="claude" class="open-provider" title="在新标签页打开 Claude" aria-label="在新标签页打开 Claude"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M21 3L10 14"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg></button>
+    </span>
   </nav>
   <div id="container">
     <!-- Painted on the first frame; the ChatGPT frame is attached below it. -->
@@ -394,7 +398,7 @@
         <img src="icons/icon48.png" alt="" width="34" height="34">
       </div>
       <p id="loading-text" class="loading-text">正在打开 ChatGPT…</p>
-      <p class="loading-hint">登录受阻时，点顶部 ↗ 在新标签页登录后重试</p>
+      <p class="loading-hint">登录受阻时，点标签右侧的 ↗ 图标登录后重试</p>
       <button id="loading-retry" class="retry-btn hidden" type="button">重新加载</button>
       <span id="loading-version" class="loading-version"></span>
     </div>

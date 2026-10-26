@@ -1,5 +1,5 @@
 import './shared/providers.js';
-const { getProvider } = globalThis.ChatDockProviders;
+const { providers, getProvider } = globalThis.ChatDockProviders;
 /**
  * ChatGPT Session Bridge — hands the browser's ChatGPT / OpenAI cookies to a
  * local Electron shell so it can restore the same login session.
@@ -87,7 +87,7 @@ export async function syncSession(config, provider = 'chatgpt') {
     return { ok: false, count: 0, reason: 'cookie-api', detail: String(err) };
   }
 
-  if (!cookies.length) return { ok: false, count: 0, reason: 'empty' };
+  if (!cookies.length) return { ok: true, count: 0, reason: 'empty' };
 
   let response;
   try {
@@ -118,6 +118,27 @@ export async function syncSession(config, provider = 'chatgpt') {
   return {
     ok: payload ? payload.ok !== false : true,
     count: payload?.count ?? payload?.imported ?? cookies.length,
-    reason: 'sent'
+    reason: 'sent',
+    refreshed: payload?.refreshed === true
+  };
+}
+
+
+/** Sync all services independently: an empty or failed jar cannot block another. */
+export async function syncAllSessions(config) {
+  let settings;
+  try { settings = config || await readBridgeConfig(); }
+  catch (error) { return { ok: false, count: 0, reason: 'config', detail: String(error) }; }
+  const entries = await Promise.all(Object.keys(providers).map(async id => {
+    try { return [id, await syncSession(settings, id)]; }
+    catch (error) { return [id, { ok: false, count: 0, reason: 'exception', detail: String(error) }]; }
+  }));
+  const results = Object.fromEntries(entries);
+  const values = Object.values(results);
+  return {
+    ok: values.every(result => result.ok),
+    count: values.reduce((count, result) => count + (result.ok ? result.count : 0), 0),
+    reason: values.every(result => result.reason === 'empty') ? 'empty' : values.some(result => !result.ok) ? 'partial' : 'sent',
+    results
   };
 }

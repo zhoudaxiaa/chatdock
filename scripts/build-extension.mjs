@@ -7,7 +7,7 @@ const pkg = JSON.parse(await readFile(path.join(root, 'package.json')));
 const out = path.join(root, 'dist/extension');
 await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
-const files = ['background.js', 'session-bridge.js', 'content.js', 'provider-inject.js', 'sidepanel.html', 'sidepanel.js', 'options.html', 'options.js', 'options.css', 'prompt-input.html', 'prompt-input.js', 'rules.json', 'icons', 'shared'];
+const files = ['background.js', 'session-bridge.js', 'content.js', 'provider-inject.js', 'claude-frame-compat.js', 'sidepanel.html', 'sidepanel.js', 'options.html', 'options.js', 'options.css', 'prompt-input.html', 'prompt-input.js', 'rules.json', 'icons', 'shared'];
 for (const file of files) await cp(path.join(root, 'extension', file), path.join(out, file), { recursive: true });
 await cp(path.join(root, 'shared/providers.js'), path.join(out, 'shared/providers.js'));
 const manifest = JSON.parse(await readFile(path.join(root, 'extension/manifest.json')));

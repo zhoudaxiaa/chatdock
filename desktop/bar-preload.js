@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('barApi', {
   onShortcuts: (cb) => {
     ipcRenderer.on('bar:shortcuts', (_e, shortcuts) => cb(shortcuts));
   },
+  refresh: () => ipcRenderer.invoke('bar:refresh'),
   openSettings: () => ipcRenderer.send('bar:open-settings'),
   screenshot: () => ipcRenderer.send('bar:screenshot'),
   getTopmost: () => ipcRenderer.invoke('bar:get-topmost'),

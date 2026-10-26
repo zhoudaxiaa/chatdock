@@ -72,6 +72,10 @@
     <span>设置</span>
   </button>
 
+  <button id="refresh" title="刷新当前服务" aria-label="刷新当前服务">
+    <svg viewBox="0 0 24 24"><path d="M20 7v5h-5"/><path d="M19.2 7A8 8 0 1 0 20 16"/></svg>
+    <span>刷新</span>
+  </button>
   <div class="drag-spacer"></div>
 
   <button id="menu" title="功能菜单：截图、置顶、退出" aria-label="功能菜单">☰</button>
@@ -90,6 +94,7 @@
 <script>
   document.body.classList.add(window.barApi.platform);
   document.getElementById('settings').addEventListener('click', () => window.barApi.openSettings());
+  document.getElementById('refresh').addEventListener('click', () => window.barApi.refresh());
   document.getElementById('menu').addEventListener('click', () => window.barApi.contextMenu());
   function showProvider(id) {
     document.querySelectorAll('[data-provider]').forEach(btn => {

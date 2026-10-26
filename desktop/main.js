@@ -104,6 +104,7 @@ function startCookieBridge() {
           const { cookies = [], provider = 'chatgpt' } = JSON.parse(body || '{}');
           if (!Object.hasOwn(providers, provider)) throw new Error('未知服务');
           if (!Array.isArray(cookies)) throw new Error('payload 不是数组');
+          if (cookies.length === 0) return send(200, { ok: true, count: 0, reason: 'empty' });
           let count = 0;
           const failed = [];
           for (const c of cookies) {
@@ -139,13 +140,9 @@ function startCookieBridge() {
           }
           console.log('[登录态桥接] 导入完成：成功', count, '个，失败', failed.length, '个', failed.join(','));
           if (count > 0) {
-            send(200, { ok: true, count, skipped: failed });
-            // 导入后跳回 ChatGPT 首页，使用新会话
-            // Refresh only that service; syncing cookies must not switch the active service.
-            const view = providerViews.get(provider);
-            if (view && !view.webContents.isDestroyed()) {
-              view.webContents.reload();
-            }
+            // Refresh that provider's existing page without selecting it or losing its URL.
+            const refreshed = refreshProvider(provider);
+            send(200, { ok: true, count, skipped: failed, refreshed });
           } else {
             send(400, { ok: false, error: '所有 Cookie 均写入失败: ' + failed.join(',') });
           }
@@ -298,6 +295,13 @@ function switchProvider(id) {
 
 const chatWC = () => (chatView && !chatView.webContents.isDestroyed() ? chatView.webContents : null);
 
+function refreshProvider(id) {
+  const view = providerViews.get(id);
+  if (!view || view.webContents.isDestroyed()) return false;
+  try { view.webContents.reload(); return true; }
+  catch (error) { logStartupError('refreshProvider', error); return false; }
+}
+
 function layoutViews() {
   if (!win || win.isDestroyed() || !barView || !chatView) return;
   const { width, height } = win.getContentBounds();
@@ -387,9 +391,9 @@ function setLevel(on, target = win) {
   }
 }
 
-// 全屏应用位于独立的 Space，单独设置 always-on-top 无法跨过去。
-// 允许 Electron 执行默认的进程类型转换，才能正确加入全屏 Space。
-// 转换可能短暂隐藏窗口和 Dock，因此按窗口缓存状态，只在初次配置 / 开关变化时调用。
+// Workspace visibility must not transform the whole app into a UIElement:
+// that removes it from the Dock and macOS's normal application list.
+// Keep the foreground application policy while setting per-window collection behaviour.
 function applyWorkspacesVisible(on, target = win) {
   if (!IS_MAC || !target || target.isDestroyed()) return;
   if (typeof target.setVisibleOnAllWorkspaces !== 'function') return;
@@ -397,7 +401,8 @@ function applyWorkspacesVisible(on, target = win) {
   if (workspaceVisibility.get(target) === visible) return;
   try {
     target.setVisibleOnAllWorkspaces(visible, {
-      visibleOnFullScreen: visible
+      visibleOnFullScreen: visible,
+      skipTransformProcessType: true
     });
     workspaceVisibility.set(target, visible);
   } catch (err) {
@@ -406,14 +411,14 @@ function applyWorkspacesVisible(on, target = win) {
 }
 
 function setWindowTopmost(target, on) {
-  // 先完成可能重排窗口的进程转换，再恢复窗口层级。
+  // 先配置工作区可见性，再恢复窗口层级。
   applyWorkspacesVisible(on, target);
   setLevel(on, target);
 }
 
 // 主窗口、设置窗口共享同一策略，所有入口切换置顶时同步更新。
 function setTopmost(on) {
-  // 进程转换影响整个应用，先完成两个窗口的工作区配置，再统一恢复层级。
+  // 先完成两个窗口的工作区配置，再统一恢复层级。
   applyWorkspacesVisible(on, win);
   applyWorkspacesVisible(on, settingsWin);
   setWindowTopmost(win, on);
@@ -449,8 +454,7 @@ function raiseWindow() {
   win.focus();
   // macOS 上 hide→show 会把窗口层级重置回普通层（always-on-top 丢失），
   // 所以置顶必须在 show() **之后**再压一次。这里只碰 level 和 orderFront，
-  // 不碰 setVisibleOnAllWorkspaces —— 那个会进程类型转换、把窗口短暂藏起来，
-  // 跟 show() 挤在同一个时序里正是「偶发不置顶」的来源。
+  // 工作区配置只在置顶开关变化时更新；唤起路径只恢复层级和顺序。
   promote();
   focusChat();
 }
@@ -505,7 +509,7 @@ function createWindow() {
   // macOS 上 hide→show 会重置窗口层级，任何路径把窗口亮出来都要重新压一次：
   // 热键唤起、托盘点击、点 Dock、从最小化恢复、退出全屏都算。
   // 这里只走 promote()（改 level + orderFront），不碰跨桌面可见，
-  // 避免把「进程类型转换 → 窗口短暂隐藏」塞进 show 的时序里。
+  // 工作区配置另行缓存，避免在每次 show 时重复设置。
   const onBecomeVisible = () => promote();
   win.on('show', onBecomeVisible);
   win.on('restore', onBecomeVisible);
@@ -534,9 +538,7 @@ function createWindow() {
     .catch(err => logStartupError('loadBar', err));
 
   win.setTitle('ChatDock · ' + getProvider(settings.provider).label);
-  // 首次应用完整的置顶策略（层级 + 跨桌面可见）。放在 show 之前调用，
-  // 这样 mac 上那次进程类型转换发生在窗口还不可见的时候，用户看不到闪。
-  // 之后只有置顶开关真的变化时才会再动 setVisibleOnAllWorkspaces。
+  // 首次显示前完成置顶与工作区配置；后续仅在开关变化时更新工作区状态。
   setTopmost(!!settings.alwaysOnTopOnShow);
   // 首次显示也走同一套置顶逻辑，保证启动就是最前面那一层
   raiseWindow();
@@ -920,7 +922,7 @@ ipcMain.handle('settings:save', (e, raw) => {
   settings = { ...v.value, provider: previous.provider };
   // 置顶开关改动立即生效，不必重启；设置窗口自己也要跟着置顶，
   // 否则它会被刚刚变成置顶的主窗口盖住（保存有警告时窗口不会自动关闭）
-  // 只在开关真的变了才动层级：这个调用带进程类型转换，会闪一下窗口
+  // 只在开关变化时更新工作区配置。
   if (!!previous.alwaysOnTopOnShow !== !!settings.alwaysOnTopOnShow) {
     setTopmost(settings.alwaysOnTopOnShow);
   }
@@ -957,6 +959,11 @@ ipcMain.on('settings:close', (e) => {
 });
 ipcMain.on('settings:quit', (e) => {
   if (fromSettingsWin(e)) quitApp('设置窗口');
+});
+
+ipcMain.handle('bar:refresh', (e) => {
+  if (!fromBar(e)) return { ok: false };
+  return { ok: refreshProvider(settings.provider) };
 });
 
 ipcMain.handle('bar:get-provider', (e) => fromBar(e) ? settings.provider : null);
@@ -1106,6 +1113,10 @@ if (!gotSingleInstanceLock) {
   });
 
   app.whenReady().then(() => {
+    if (IS_MAC) {
+      app.setActivationPolicy('regular');
+      void app.dock.show().catch(err => logStartupError('showDock', err));
+    }
     // 每一步都单独兜底：任何一环失败都不能连累窗口创建
     try { settings = settingsLib.loadSettings(SETTINGS_FILE); } catch (err) { logStartupError('loadSettings', err); }
     try { loadExtensions(); } catch (err) { logStartupError('loadExtensions', err); }

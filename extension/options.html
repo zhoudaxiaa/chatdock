@@ -36,6 +36,16 @@
       <h2>常规设置</h2>
       <div class="setting-item">
         <div class="setting-info">
+          <label class="setting-name" for="claude-full-ui">Claude 完整导航兼容</label>
+          <span class="setting-description">在 ChatDock 内恢复 Claude 的侧栏和历史列表。切换会重新加载 Claude 页面；若网站更新后异常，可关闭以恢复原始嵌入布局。</span>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="claude-full-ui">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="setting-item">
+        <div class="setting-info">
           <span class="setting-name">自动发送</span>
           <span class="setting-description">把文字填进输入框后自动按回车发送</span>
         </div>
@@ -47,12 +57,28 @@
     </section>
 
     <section class="settings-section">
+      <h2>服务地址</h2>
+      <p class="help-text">保存后侧边栏立即使用新地址，无需重新打包。仅支持各自站点的 HTTPS 地址。</p>
+      <div class="setting-item">
+        <label class="setting-info" for="chatgpt-url"><span class="setting-name">ChatGPT</span></label>
+        <input type="url" id="chatgpt-url" class="text-input" spellcheck="false" placeholder="https://chatgpt.com/">
+      </div>
+      <div class="setting-item">
+        <label class="setting-info" for="claude-url"><span class="setting-name">Claude</span></label>
+        <input type="url" id="claude-url" class="text-input" spellcheck="false" placeholder="https://claude.ai/new">
+      </div>
+      <button class="btn btn-primary btn-small" id="save-provider-urls">保存地址</button>
+      <button class="btn btn-secondary btn-small" id="reset-provider-urls">恢复默认地址</button>
+      <span id="provider-url-status" class="setting-description" role="status"></span>
+    </section>
+
+    <section class="settings-section">
       <h2>桌面端同步</h2>
 
       <div class="setting-item">
         <div class="setting-info">
-          <span class="setting-name">把当前服务的登录态同步到桌面端</span>
-          <span class="setting-description">读取侧边栏当前所选服务（ChatGPT 或 Claude）的 Cookie，发送给本机运行的 Electron 套壳。默认发送到本机回环地址；启动自动同步会分别同步两个服务</span>
+          <span class="setting-name">启动时同步两个服务的登录态</span>
+          <span class="setting-description">每次同步都会读取 ChatGPT 和 Claude 的 Cookie；未登录、没有 Cookie 的服务会跳过，保留桌面端原有会话。成功导入后自动刷新对应页面。</span>
         </div>
         <label class="toggle-switch">
           <input type="checkbox" id="bridge-auto">
@@ -78,7 +104,7 @@
 
       <div class="setting-item">
         <div class="setting-info">
-          <span class="setting-name">立即同步</span>
+          <span class="setting-name">同步两个服务</span>
           <span class="setting-description" id="bridge-status">还没同步过</span>
         </div>
         <button class="btn btn-primary btn-small" id="bridge-sync">同步</button>

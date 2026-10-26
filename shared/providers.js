@@ -19,7 +19,22 @@
     const host = String(raw || '').replace(/^\./, '').toLowerCase();
     return getProvider(id).domains.some(d => host === d || host.endsWith('.' + d));
   }
-  const api = { providers, getProvider, ownsDomain };
+  function normalizeProviderUrl(id, raw) {
+    const provider = getProvider(id);
+    const url = new URL(typeof raw === 'string' && raw.trim() ? raw.trim() : provider.url);
+    // Existing extension permissions and composer adapters only cover these sites.
+    if (url.origin !== new URL(provider.url).origin || url.username || url.password) {
+      throw new Error(`${provider.label} 地址必须使用 ${new URL(provider.url).origin}`);
+    }
+    return url.href;
+  }
+  function resolveProviderUrls(stored) {
+    return Object.fromEntries(Object.keys(providers).map(id => {
+      try { return [id, normalizeProviderUrl(id, stored?.[id])]; }
+      catch { return [id, providers[id].url]; }
+    }));
+  }
+  const api = { providers, getProvider, ownsDomain, normalizeProviderUrl, resolveProviderUrls };
   root.ChatDockProviders = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(globalThis);

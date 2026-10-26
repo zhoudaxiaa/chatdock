@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { providers, getProvider, ownsDomain } = require('../shared/providers');
+const { providers, getProvider, ownsDomain, normalizeProviderUrl, resolveProviderUrls } = require('../shared/providers');
 const settings = require('../desktop/app-settings');
 test('unknown provider falls back, and cookie domains cannot cross service boundaries', () => {
   assert.equal(getProvider('bad').id, 'chatgpt');
@@ -34,8 +34,16 @@ test('extension package has the unified version, references and providers', () =
   assert.equal(manifest.version, pkg.version);
   for (const match of ['https://chatgpt.com/*', 'https://claude.ai/*']) {
     assert.ok(manifest.host_permissions.includes(match));
-    assert.ok(manifest.content_scripts.find(s => s.all_frames).matches.includes(match));
+    assert.ok(manifest.content_scripts.find(s => s.js.includes('provider-inject.js')).matches.includes(match));
   }
   assert.equal(manifest.declarative_net_request.rule_resources[0].enabled, false);
   assert.equal(fs.readFileSync(path.join(__dirname, '../dist/extension/shared/providers.js'), 'utf8'), fs.readFileSync(path.join(__dirname, '../shared/providers.js'), 'utf8'));
+});
+
+test('provider URL configuration accepts same-site routes and rejects unsupported origins', () => {
+  assert.equal(normalizeProviderUrl('claude', ' https://claude.ai/ '), 'https://claude.ai/');
+  assert.equal(normalizeProviderUrl('claude', ''), 'https://claude.ai/new');
+  assert.equal(normalizeProviderUrl('chatgpt', 'https://chatgpt.com/?temporary-chat=true'), 'https://chatgpt.com/?temporary-chat=true');
+  for (const value of ['http://claude.ai/new', 'javascript:alert(1)', 'https://claude.ai.evil.test/', 'https://user:pass@claude.ai/new', 'not a url']) assert.throws(() => normalizeProviderUrl('claude', value));
+  assert.equal(resolveProviderUrls({ claude: 'https://evil.test/' }).claude, 'https://claude.ai/new');
 });

@@ -18,7 +18,7 @@ function boot() {
     insertCSS() { return Promise.resolve(); }
     focus() {}
     send() {}
-    reload() { this.reloaded = true; }
+    reload() { this.reloaded = true; this.reloadCount = (this.reloadCount || 0) + 1; }
     close() { this.destroyed = true; }
   }
   class View {
@@ -41,7 +41,7 @@ function boot() {
     focus() {}
     moveTop() {}
     setAlwaysOnTop() {}
-    setVisibleOnAllWorkspaces() {}
+    setVisibleOnAllWorkspaces(visible, options) { this.workspaces = { visible, options }; }
   }
   const sessionFor = id => ({ cookies: { set: async cookie => { writes.push({ id, cookie }); } } });
   const sessions = { default: sessionFor('default'), claude: sessionFor('claude') };
@@ -102,4 +102,42 @@ test('bridge imports only declared service cookies and never switches the active
   assert.equal((await app.bridge({ provider: 'claude', cookies: [cookie('.claude.ai', 'sessionKey')] })).status, 200);
   assert.equal(app.writes[1].id, 'claude');
   assert.equal((await app.bridge({ provider: 'unknown', cookies: [] })).status, 400);
+});
+
+test('manual refresh targets only the active service and rejects a remote sender', () => {
+  const app = boot(), win = app.createWindow();
+  const chatgpt = app.getViews().get('chatgpt');
+  app.switchProvider('claude');
+  const claude = app.getViews().get('claude');
+  const event = { sender: app.getBar().webContents };
+  assert.equal(app.handlers.get('bar:refresh')({ sender: claude.webContents }).ok, false);
+  assert.equal(app.handlers.get('bar:refresh')(event).ok, true);
+  assert.equal(claude.webContents.reloadCount, 1);
+  assert.equal(chatgpt.webContents.reloadCount, undefined);
+  app.switchProvider('chatgpt');
+  app.handlers.get('bar:refresh')(event);
+  assert.equal(chatgpt.webContents.reloadCount, 1);
+  assert.equal(claude.webContents.reloadCount, 1);
+  if (process.platform === 'darwin') {
+    assert.equal(win.workspaces.visible, true);
+    assert.equal(win.workspaces.options.skipTransformProcessType, true);
+    assert.equal(win.workspaces.options.visibleOnFullScreen, true);
+  }
+});
+test('successful imports refresh the matching page, while empty jars preserve desktop sessions', async () => {
+  const app = boot(); app.createWindow(); app.switchProvider('claude'); app.startCookieBridge();
+  const chatgpt = app.getViews().get('chatgpt').webContents;
+  const claude = app.getViews().get('claude').webContents;
+  const cookie = { domain: '.chatgpt.com', name: 'session', value: 'test', secure: true };
+  const imported = await app.bridge({ provider: 'chatgpt', cookies: [cookie] });
+  assert.equal(imported.body.refreshed, true);
+  assert.equal(chatgpt.reloadCount, 1);
+  assert.equal(claude.reloadCount, undefined);
+  const empty = await app.bridge({ provider: 'claude', cookies: [] });
+  assert.equal(empty.status, 200);
+  assert.equal(empty.body.ok, true);
+  assert.equal(empty.body.reason, 'empty');
+  assert.equal(app.writes.length, 1);
+  assert.equal(claude.reloadCount, undefined);
+  assert.equal(app.getSettings().provider, 'claude');
 });

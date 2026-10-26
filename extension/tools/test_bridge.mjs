@@ -24,16 +24,18 @@ const FAKE = {
 globalThis.chrome = {
   cookies: {
     async getAll({ domain }) {
+      if (FAKE[domain] instanceof Error) throw FAKE[domain];
       return FAKE[domain] || [];
     }
   }
 };
 
-const { syncSession } = await import('../../dist/extension/session-bridge.js');
+const { syncSession, syncAllSessions } = await import('../../dist/extension/session-bridge.js');
 
 // --- helpers -----------------------------------------------------------------
 
 let received = null;
+const requests = [];
 let mode = 'ok';
 
 const server = createServer((req, res) => {
@@ -43,6 +45,7 @@ const server = createServer((req, res) => {
   });
   req.on('end', () => {
     received = { headers: req.headers, body };
+    requests.push(JSON.parse(body));
 
     if (mode === 'unauthorized') {
       res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -93,7 +96,7 @@ FAKE['openai.com'] = [];
 received = null;
 
 const empty = await syncSession({ url: endpoint, token: 'secret-token' });
-check('reports empty instead of posting', empty.ok === false && empty.reason === 'empty', JSON.stringify(empty));
+check('reports empty instead of posting', empty.ok === true && empty.reason === 'empty', JSON.stringify(empty));
 check('no request is sent when empty', received === null);
 
 FAKE['chatgpt.com'] = saved;
@@ -104,6 +107,23 @@ const claude = await syncSession({ url: endpoint, token: 'secret-token' }, 'clau
 const claudeBody = JSON.parse(received.body);
 check('Claude bridge declares provider', claude.ok && claudeBody.provider === 'claude');
 check('Claude bridge excludes OpenAI cookies', claudeBody.cookies.length === 1 && claudeBody.cookies[0].domain === '.claude.ai');
+
+const config = { url: endpoint, token: 'secret-token' };
+const both = await syncAllSessions(config);
+check('one sync includes both services', both.ok && both.results.chatgpt.count === 4 && both.results.claude.count === 1);
+check('both provider payloads reach the endpoint', new Set(requests.slice(-2).map(r => r.provider)).size === 2);
+FAKE['claude.ai'] = [];
+const oneEmpty = await syncAllSessions(config);
+check('empty Claude does not block ChatGPT', oneEmpty.ok && oneEmpty.results.chatgpt.count === 4 && oneEmpty.results.claude.reason === 'empty');
+FAKE['claude.ai'] = new Error('cookie API failed');
+const oneFailed = await syncAllSessions(config);
+check('a provider error does not block the other import', !oneFailed.ok && oneFailed.results.chatgpt.ok && oneFailed.results.claude.reason === 'cookie-api');
+FAKE['chatgpt.com'] = []; FAKE['openai.com'] = []; FAKE['claude.ai'] = [];
+const beforeEmpty = requests.length;
+const bothEmpty = await syncAllSessions(config);
+check('all-empty sync is a harmless skip', bothEmpty.ok && bothEmpty.reason === 'empty' && bothEmpty.count === 0);
+check('all-empty sync sends no requests and never clears desktop cookies', requests.length === beforeEmpty);
+FAKE['chatgpt.com'] = saved; FAKE['openai.com'] = savedOpenai;
 
 // --- 3. rejected token -------------------------------------------------------
 

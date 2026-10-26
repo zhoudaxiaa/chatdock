@@ -1,4 +1,4 @@
-const { providers, getProvider } = globalThis.ChatDockProviders;
+const { providers, getProvider, resolveProviderUrls } = globalThis.ChatDockProviders;
 const container = document.getElementById('container');
 const overlay = document.getElementById('loading-overlay');
 const loadingText = document.getElementById('loading-text');
@@ -7,6 +7,8 @@ const notification = document.getElementById('notification');
 const notificationText = document.getElementById('notification-text');
 const frames = new Map();
 let active = 'chatgpt';
+let providerUrls = resolveProviderUrls();
+let claudeFullUi = true;
 let pendingId = null;
 let notificationTimer;
 let slowTimer;
@@ -50,12 +52,13 @@ function getFrame(id) {
   const frame = document.createElement('iframe');
   frame.className = 'provider-frame';
   frame.title = getProvider(id).label;
+  if (id === 'claude') frame.name = `chatdock-claude:${chrome.runtime.id}:${claudeFullUi ? 'full' : 'native'}`;
   frame.setAttribute('allow', 'clipboard-read; clipboard-write');
   frame.setAttribute('referrerpolicy', 'no-referrer');
   const state = { frame, ready: false, theme: '' };
   frames.set(id, state);
   container.insertBefore(frame, overlay);
-  frame.src = getProvider(id).url;
+  frame.src = providerUrls[id];
   return state;
 }
 
@@ -82,12 +85,13 @@ async function selectProvider(id, persist = true) {
 }
 
 document.querySelectorAll('[data-provider]').forEach(btn => btn.addEventListener('click', () => { void selectProvider(btn.dataset.provider); }));
-document.getElementById('open-tab').addEventListener('click', () => chrome.tabs.create({ url: getProvider(active).url }));
-document.getElementById('settings').addEventListener('click', () => chrome.runtime.openOptionsPage());
+document.querySelectorAll('[data-open-provider]').forEach(btn => btn.addEventListener('click', () => {
+  void chrome.tabs.create({ url: providerUrls[btn.dataset.openProvider] });
+}));
 retryBtn.addEventListener('click', () => {
   const state = frames.get(active);
   state.ready = false;
-  state.frame.src = getProvider(active).url;
+  state.frame.src = providerUrls[active];
   showLoading();
 });
 
@@ -95,7 +99,7 @@ window.addEventListener('message', event => {
   const message = event.data;
   const id = message?.provider;
   const state = frames.get(id);
-  if (!state || event.source !== state.frame.contentWindow || event.origin !== new URL(getProvider(id).url).origin) return;
+  if (!state || event.source !== state.frame.contentWindow || event.origin !== new URL(providerUrls[id]).origin) return;
   if (message.type === 'PROVIDER_READY') {
     state.ready = true;
     if (id === active) { clearTimeout(slowTimer); overlay.classList.add('hidden'); }
@@ -132,6 +136,19 @@ async function restoreDelivery() {
   if (all.pendingPasteAck) acknowledge(all.pendingPasteAck);
 }
 chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'sync' && (changes.providerUrls || changes.claudeFullUi)) {
+    const nextUrls = changes.providerUrls ? resolveProviderUrls(changes.providerUrls.newValue) : providerUrls;
+    const nextFullUi = changes.claudeFullUi ? changes.claudeFullUi.newValue !== false : claudeFullUi;
+    frames.forEach((state, id) => {
+      if (providerUrls[id] === nextUrls[id] && !(id === 'claude' && nextFullUi !== claudeFullUi)) return;
+      state.ready = false;
+      if (id === 'claude') state.frame.name = `chatdock-claude:${chrome.runtime.id}:${nextFullUi ? 'full' : 'native'}`;
+      state.frame.src = nextUrls[id];
+    });
+    providerUrls = nextUrls;
+    claudeFullUi = nextFullUi;
+    showLoading();
+  }
   if (area !== 'local') return;
   if (changes.activeProvider?.newValue && changes.activeProvider.newValue !== active) void selectProvider(changes.activeProvider.newValue, false);
   Object.keys(changes).filter(key => key.startsWith('paste:')).forEach(key => delivered(changes[key].newValue));
@@ -141,6 +158,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
 (async () => {
   try {
     await configureFrames();
+    const stored = await chrome.storage.sync.get(['providerUrls', 'claudeFullUi']);
+    providerUrls = resolveProviderUrls(stored.providerUrls);
+    claudeFullUi = stored.claudeFullUi !== false;
     const { activeProvider } = await chrome.storage.local.get('activeProvider');
     await selectProvider(getProvider(activeProvider).id, false);
   } catch (err) {
