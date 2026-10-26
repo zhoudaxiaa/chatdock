@@ -4,6 +4,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('barApi', {
   // 顶栏要给 macOS 红绿灯留出位置（Windows 的窗口按钮由我们自己画）
   platform: process.platform,
+  getProvider: () => ipcRenderer.invoke('bar:get-provider'),
+  setProvider: id => ipcRenderer.invoke('bar:set-provider', id),
+  onProvider: cb => ipcRenderer.on('bar:provider', (_e, id) => cb(id)),
   getShortcuts: () => ipcRenderer.invoke('bar:get-shortcuts'),
   onShortcuts: (cb) => {
     ipcRenderer.on('bar:shortcuts', (_e, shortcuts) => cb(shortcuts));

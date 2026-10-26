@@ -1,225 +1,79 @@
-# ChatGPT Desktop 🚀
+# ChatDock
 
-把 ChatGPT 网页版装进原生桌面窗口的轻量 Electron 壳 —— 全局热键、系统托盘、浏览器登录态一键桥接、UA / Client-Hints 伪装，并内置 GitHub Actions 自动构建 Windows 与 macOS 安装包。
+在桌面窗口或浏览器侧边栏中使用 **ChatGPT / Claude**。两个服务各自保留当前页面、登录态和草稿，顶部一键切换；不需要 API Key，使用网站本身的账号。
 
-[![Release](https://img.shields.io/github/v/release/zhoudaxiaa/chatgpt-electron?color=10a37f&label=release)](https://github.com/zhoudaxiaa/chatgpt-electron/releases/latest)
-[![Build & Release](https://img.shields.io/github/actions/workflow/status/zhoudaxiaa/chatgpt-electron/build-release.yml?label=build)](https://github.com/zhoudaxiaa/chatgpt-electron/actions/workflows/build-release.yml)
-[![License](https://img.shields.io/github/license/zhoudaxiaa/chatgpt-electron?color=blue)](./LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey)](#-下载安装)
+由桌面端 chatgpt-electron 与 [simple-chatgpt-sidebar](https://github.com/zhoudaxiaa/simple-chatgpt-sidebar) 合并，沿用当前仓库与发布历史。产品与仓库统一改名为 [ChatDock](https://github.com/zhoudaxiaa/chatdock)，保留原仓库的提交、标签与 Release；GitHub 会将旧地址重定向到新地址。
 
-> 一个很薄的包装层，只解决网页版在桌面上最难受的两件事：
-> 1. **Google 登录被拦**（`disallowed_useragent`）—— 通过 UA + Client-Hints 伪装绕过；
-> 2. **每次都要重新登录** —— 用配套浏览器扩展把浏览器里的 ChatGPT 登录态同步进桌面应用。
+## 开发
 
----
+要求 Node.js 22+、pnpm 10.11.0、Python 3（扩展 ZIP 打包与静态校验使用标准库）。一个根 package.json、一份 pnpm-lock.yaml，无 workspace 子包。
 
-## ⬇️ 下载安装
-
-前往 [**Releases**](https://github.com/zhoudaxiaa/chatgpt-electron/releases/latest) 下载对应平台的安装包：
-
-| 平台 | 架构 | 推荐文件 | 说明 |
-| --- | --- | --- | --- |
-| Windows | x64（Intel / AMD） | `ChatGPT Desktop Setup x.y.z.exe` | NSIS 安装版，可选安装目录、创建桌面快捷方式 |
-| Windows | x64 | `ChatGPT Desktop x.y.z.exe` | 便携版，免安装，双击即用 |
-| Windows | x64 | `*.zip` | 免安装压缩包 |
-| macOS | arm64（Apple Silicon / M 系列） | `*.dmg` | 拖入「应用程序」即可 |
-| macOS | arm64 | `*.zip` | 解压后运行 `.app` |
-| 浏览器扩展 | Chrome / Edge | `chatgpt-session-bridge-v*.zip` | 登录态桥接插件包（可选，见下文） |
-
-> **macOS 未签名提示**：安装包未做 Apple 公证，首次打开若提示「无法验证开发者」，请右键 → 打开，或到「系统设置 → 隐私与安全性」中点击「仍要打开」。
-
----
-
-## ✨ 功能特性
-
-| 功能 | 说明 |
-| --- | --- |
-| 🪟 原生窗口 | 干净的桌面窗口，关闭按钮只隐藏窗口，进程常驻后台 |
-| ⌨️ 全局热键 | `Control + Space` 在任何应用中唤起 / 隐藏窗口 |
-| 📌 窗口置顶 | 唤起时浮在其他应用上层，不会被别的窗口挡住；顶栏「置顶」按钮、托盘菜单、设置页三处可随时切换，状态持久化 |
-| 📸 区域截图 | `Control + Alt + A` 框选屏幕区域（支持多显示器，矩形 / 箭头 / 画笔 / 文字 / 马赛克标注），确认后复制到剪贴板并可自动粘贴进输入框，基于 [electron-screenshots](https://github.com/nashaofu/screenshots)（MIT） |
-| ⚙️ 快捷键设置 | 窗口顶部「设置」按钮可修改所有功能快捷键，自动检测冲突与被占用，配置保存在 `%APPDATA%\chatgpt-electron\settings.json` |
-| 🚪 三个退出入口 | `Control + Q`、顶栏右键菜单、设置页「退出应用」；退出有超时兜底，不会留下关不掉的进程 |
-| 🖥️ 系统托盘 | 托盘图标左键切换窗口显示，右键菜单退出应用 |
-| 🍪 登录态桥接 | 本地 HTTP 服务（`127.0.0.1:32123`）接收浏览器扩展同步的 Cookies，一键继承浏览器登录态 |
-| 🌐 UA / Client-Hints 伪装 | UA 伪装为 Chrome 130，并通过 CDP 覆盖 `Sec-CH-UA`，规避 Google OAuth 的 `disallowed_useragent` 拦截 |
-| 🔗 外链处理 | 会话内链接自动交给系统浏览器打开，不污染应用内历史（兼容 `<a>` 与 `window.open` 两种打开方式） |
-| 🧩 扩展加载 | 启动时自动加载 `extensions/` 目录下的 Chrome 扩展 |
-| 🤖 自动发版 | 打 tag / 发 Release 即触发 GitHub Actions，构建并回传安装包与插件包 |
-
----
-
-## 🚀 快速上手
-
-### 方式一：直接用安装包（普通用户）
-
-1. 从 [Releases](https://github.com/zhoudaxiaa/chatgpt-electron/releases/latest) 下载并安装对应平台的包；
-2. 启动应用，首次会打开 `https://chatgpt.com`，可直接在窗口内登录；
-3. （推荐）安装配套浏览器扩展，省去重复登录 —— 见下一节；
-4. 之后随时按 `Control + Space` 唤起窗口。
-
-### 方式二：从源码运行（开发者）
-
-```bash
-git clone https://github.com/zhoudaxiaa/chatgpt-electron.git
-cd chatgpt-electron
-npm install
-npm start
+```sh
+corepack enable
+corepack prepare pnpm@10.11.0 --activate
+pnpm install --frozen-lockfile
+pnpm start
+pnpm build:extension
+pnpm check
+pnpm test
+pnpm test:desktop  # 真实 Electron 窗口冒烟，使用临时用户目录
 ```
 
-#### 常用快捷键
+扩展从 `dist/extension` 加载：Chrome / Edge → 扩展管理 → 开启开发者模式 → 加载已解压扩展。可分发 ZIP 为 `dist/chatdock-extension-v<版本>.zip`。源码目录需要构建后再加载，共享服务定义由构建脚本复制进扩展。
 
-以下为默认值，均可在窗口顶部「设置」中修改：
-
-| 按键 | 作用 |
-| --- | --- |
-| `Control + Space` | 全局唤起 / 隐藏窗口 |
-| `Control + Alt + A` | 全局区域截图 |
-| `Control + Q` | 退出应用（仅窗口获得焦点时有效） |
-
-> 右上角 `×` 只是把窗口隐藏到托盘（全局热键继续可用），不会退出程序。
-> 要完全退出：按 `Control + Q`，或在顶栏空白处右键 →「退出应用」，或在设置页底部点「退出应用」。
-
----
-
-## 🍪 登录态桥接（可选但强烈推荐）
-
-配套 Chrome 扩展 **ChatGPT Session Bridge** 会把浏览器中已登录的 ChatGPT Cookies 推送到桌面应用，实现「浏览器登过一次，桌面端免登录」。
-
-**安装扩展**
-
-1. 下载 Release 中的 `chatgpt-session-bridge-v*.zip` 并解压；
-2. 打开 `chrome://extensions`（Edge 为 `edge://extensions`），开启右上角「开发者模式」；
-3. 点击「加载已解压的扩展程序」，选择解压后的目录；
-4. 也可以直接从仓库源码加载：选择 `browser-extension/` 目录。
-
-**使用流程**
-
-1. 先在浏览器里登录 ChatGPT；
-2. 保持桌面应用处于运行状态；
-3. 点击扩展图标手动同步（扩展/浏览器启动时也会自动同步一次）；
-4. 桌面应用收到 Cookies 后自动加载 `https://chatgpt.com`，此时已是登录状态。
-
-**安全说明**
-
-- 桥接服务仅监听 `127.0.0.1:32123`，不对公网开放；
-- 请求必须携带请求头 `x-bridge-token: dsh-chatgpt-bridge-2026`，否则返回 `403`；
-- Cookies 只写入 Electron 自己的会话存储，不会上传到任何第三方服务器。
-
----
-
-## 🔨 本地构建安装包
-
-```bash
-# Windows：NSIS 安装版 + 便携版 + zip
-npm run build:win
-
-# macOS：dmg + zip
-npm run build:mac
-
-# 两个平台一起打（需在对应系统上分别执行）
-npm run release
+```text
+package.json / pnpm-lock.yaml   统一依赖、命令、版本
+shared/providers.js             两端共享服务 URL、域名和输入框适配
+desktop/                      Electron 主进程、预加载、顶栏、设置与图标
+extension/                     浏览器侧边栏、提示词、登录态桥接
+scripts/                       构建、检查、发布脚本
+tests/                         提示词、投递隔离、会话桥接、桌面切换检查
+dist/extension/                可直接加载的扩展产物（生成）
 ```
 
-产物输出到 `dist/` 目录。macOS 构建默认未签名，如需签名请自行配置 `CSC_LINK` / `CSC_KEY_PASSWORD`。
+## 桌面端
 
----
+- 顶栏直接选择 ChatGPT / Claude，切换时保留两个页面；第二个服务按需加载。
+- 顶栏右侧 **☰** 菜单提供截图、置顶、设置、隐藏与退出；也可用托盘菜单，macOS 还可使用系统「服务」菜单切换。
+- 默认 `Control+Space` 唤起 / 隐藏，`Control+Alt+A` 区域截图，`Control+Q` 退出，均可在设置中修改。
+- 关闭窗口只会隐藏到托盘。截图可复制并粘贴到当前服务的输入框。
+- 兼容旧版桌面数据：沿用 `com.zhoudaxiaa.chatgpt-electron` 应用 ID、`chatgpt-electron` 用户数据目录和 ChatGPT 默认会话；Claude 使用独立持久化会话。
+- macOS 安装包未签名、公证；Cloudflare、Google OAuth 等登录校验仍由网站决定，无法保证所有账号与网络条件都通过。
 
-## 🤖 GitHub Actions 自动发版
+## 浏览器扩展
 
-工作流：[`.github/workflows/build-release.yml`](./.github/workflows/build-release.yml)
+- 顶部切换 ChatGPT / Claude；已访问过的服务在当前侧边栏内保留页面，关闭整个侧边栏后浏览器会销毁页面，重新打开会加载上次选择的服务。
+- 选中文字右键提问、自定义提示词、页面标题 / URL 提问、提示词回收站、自动发送开关沿用原侧边栏功能。页面提问传递标题与 URL，**不会自动读取整页正文**。
+- 每条提示词绑定发送时选中的服务。只有当前服务的扩展 iframe 能处理，普通网页标签页不能抢走提示词。通知以输入框实际写入后的确认结果为准。
+- 登录受限时用顶部 **↗** 在普通标签页登录，随后在侧边栏重新加载。iframe 登录可能受网站反嵌入、第三方 Cookie 或安全验证限制；保留普通标签页入口。
+- 同步桌面登录态：在扩展设置中点击同步（针对侧边栏当前服务）；启动自动同步开启时分别同步两个服务。桌面端需要运行，监听 `127.0.0.1:32123`。Cookie 只发送给配置的桥接地址，默认本机回环地址；固定共享令牌沿用旧协议，不是抵御本机恶意程序的安全边界。
+- 嵌入兼容规则仅针对两个服务和 OpenAI 的子框架响应，限定发起方为扩展或这些站点；不修改普通顶层页面响应。
 
-| 触发方式 | 说明 |
-| --- | --- |
-| `release: published` | **推荐**：在 Releases 页面发布版本后自动构建，并把产物回传该 Release |
-| `workflow_dispatch` | 手动触发，产物只上传到 Actions Artifacts（不写 Release），适合先验证构建 |
+扩展迁移注意：解压扩展的 ID 可能随加载路径变化。保留原扩展；旧提示词可在旧扩展的 service worker 控制台导出为 JSON，再在新扩展设置中导入（详细步骤见下文）；新安装不会自动获得另一个扩展 ID 下的 storage 数据，浏览器网站本身的登录 Cookie 不受此影响。独立桥接插件已并入侧边栏，无需再装两份。
 
-> 只打 tag 不会触发构建 —— 请在 Releases 页面基于该 tag 发布 Release。
+### 从旧侧边栏导入提示词
 
-### 一键发版（推荐）
+旧版没有导出按钮。先在扩展管理页打开旧扩展的 service worker 控制台，执行：
 
-本机没装 `gh` 也能发：`scripts/publish.mjs` 走 GitHub REST API，凭据优先读 `GITHUB_TOKEN` / `GH_TOKEN`，否则复用 git 凭据管理器里已存的 token。
-
-```bash
-# 1) 改 package.json 的 version，并把 RELEASE_NOTES.md 的标题改成 `## v<新版本>`
-# 2) 提交改动后：
-npm run release:gh              # 打 tag → 推 main/tag → 创建 Release → 等 CI 出包
-npm run release:gh -- --dry-run # 只预览要做的事，不写远端
-npm run release:gh -- --draft   # 建草稿 Release（不触发构建，需手动 Publish）
-npm run release:gh -- --no-wait # 创建完就退出，不阻塞等 CI
+```js
+chrome.storage.sync.get(['pagePrompts', 'selectionPrompts', 'autoSubmit']).then(data => copy(JSON.stringify(data, null, 2)))
 ```
 
-脚本会做这些前置校验，任一条不满足就直接停下（不会 `git add -A`、也不会强推 tag）：
+把剪贴板内容保存为 JSON 文件，在 ChatDock 扩展设置点击「导入提示词」。导入只覆盖同 ID 项，保留其余现有提示词，不包含 Cookie 或桥接令牌。新扩展提供导出按钮用于后续备份。
 
-- 当前分支是 `main`、工作区干净、本地 `main` 与 `origin/main` 一致；
-- `RELEASE_NOTES.md` 首个标题的版本号与 `package.json` 一致 —— 工作流用它的内容当 Release 正文，对不上说明忘更新说明；
-- 本地 / 远端都不存在同名 tag 或 Release（避免覆盖已发布版本）。
+## 构建与发布
 
-**构建矩阵**
-
-- `windows-latest` → x64：NSIS `.exe`、便携版 `.exe`、`.zip`
-- `macos-latest` → arm64：`.dmg`、`.zip`
-- `ubuntu-latest` → 浏览器扩展插件包 `chatgpt-session-bridge-v*.zip`
-
-构建完成后，所有产物会自动挂到对应 Release 页面，用户可直接下载。
-
-> 想补一个 macOS Intel 版？把 `build-release.yml` 中 mac 矩阵项的 `--arm64` 改成 `--x64`（或使用 `macos-13` runner）即可。
-
----
-
-## 🗂️ 项目结构
-
-```
-chatgpt-electron/
-├── main.js                  # 主进程：窗口 / 托盘 / 全局热键 / 截图 / 桥接服务 / UA 伪装
-├── app-settings.js          # 快捷键定义、校验、窗口内匹配、settings.json 读写（纯逻辑，无 Electron 依赖）
-├── preload.js               # 预加载脚本：外链意图标记、会话识别
-├── bar.html / bar-preload.js            # 窗口顶部工具栏（截图 / 设置按钮）
-├── settings.html / settings-preload.js  # 设置窗口（快捷键录入、截图选项）
-├── package.json             # 依赖与 electron-builder 打包配置
-├── icon.png                 # 应用图标（Windows / Linux 托盘也用它）
-├── trayTemplate*.png        # macOS 菜单栏专用单色 template 图标（16/32/48 三档倍图，由脚本生成）
-├── browser-extension/       # 配套 Chrome 扩展「ChatGPT Session Bridge」
-│   ├── manifest.json        # MV3 清单
-│   └── background.js        # 读取 Cookie 并 POST 到本机桥接端口
-├── extensions/              # 启动时自动加载的扩展目录（.gitkeep 占位）
-├── scripts/                 # 辅助脚本：publish.mjs 一键发版 / make-tray-icon.mjs 生成菜单栏图标
-├── .github/workflows/       # GitHub Actions：构建 + 发版 + 插件打包
-├── README.md
-├── RELEASE_NOTES.md
-└── LICENSE
+```sh
+pnpm build:mac --arm64 --publish never
+pnpm build:win --x64 --publish never
+pnpm release:gh --dry-run
+pnpm release:gh
 ```
 
----
+桌面产物输出到 `dist/`。版本以根 `package.json` 为准，扩展 manifest 版本在构建时覆盖。统一版本从 **1.3.0** 起，避免低于原侧边栏的 1.2.1。
 
-## ❓ 常见问题
+正式发布前更新 `package.json` 与 `RELEASE_NOTES.md` 并提交推送。发布提交 `chore: release v<版本>` 推到 main 时，工作流校验、创建 Release 并构建 Windows x64、macOS arm64 与扩展。也可使用 `pnpm release:gh`；如 main 推送已触发自动发布，不要再运行发布脚本创建同一版本。`workflow_dispatch` 只构建，不发布。
 
-**Q：窗口里登录 Google 账号还是失败？**
-A：确认应用是通过安装包启动的（而不是 `file://` 打开页面）；UA 伪装依赖 `app.userAgentFallback` 与 CDP 覆盖，二者都只在主进程生效。
+原项目文档保留在 `desktop/LEGACY_README.md` 与 `extension/LEGACY_README.md`，用于迁移参考；当前使用方式以本文件为准。
 
-**Q：扩展点了没反应？**
-A：确认桌面应用正在运行（桥接服务随应用启动），并且 `127.0.0.1:32123` 未被占用。端口被占用时桥接服务会启动失败，可在日志中确认。
-
-**Q：双击图标没反应、任务管理器里有进程但没窗口？**
-A：先看 `%APPDATA%\chatgpt-electron\startup-error.log`，启动阶段的未捕获异常都会写在这里。v1.0.0 有过一次这类问题（`extensions/` 空目录未被打包，`readdirSync` 抛 `ENOENT` 中断了启动流程），v1.0.1 已修复。若日志为空，检查是否已被单实例锁拦截（重复双击只会唤起已有窗口）。
-
-**Q：热键 `Control + Space` 与输入法冲突？**
-A：`Control + Space` 常被输入法切换占用。点窗口顶部「设置」，改成别的组合键即可，无需重新构建。若某个热键启动时被其他程序占用，会写入 `startup-error.log`，应用本身照常运行，到「设置」里换一个键即可。
-
-**Q：截图热键没反应 / 和微信、QQ 截图冲突？**
-A：同样到「设置」里改键。默认 `Control + Alt + A` 与微信、QQ 的默认截图键相同，二者同时运行时先注册的一方生效。
-
-**Q：按快捷键窗口出来了，但还是被别的窗口盖住？**
-A：唤起窗口时默认置顶（`alwaysOnTopOnShow`，默认 `true`），先 `show()` 再恢复置顶层级并提到最前。macOS 开启置顶时，主窗口和设置窗口也会显示在其他应用的全屏空间上；关闭置顶会同时关闭跨桌面和全屏可见性。工作区配置只在窗口初次创建或置顶开关变化时应用，避免每次唤起都触发进程类型转换。若被手动关掉了，点顶栏的「置顶」按钮、托盘右键菜单里的「窗口置顶」，或到设置页「窗口」一节重新勾选即可。
-
-**Q：为什么 macOS 只有 M 芯片版？**
-A：CI 默认只构建 arm64 以节省构建时间；需要 Intel 版可自行改矩阵参数，或本地执行 `npm run build:mac -- --x64`。
-
-**Q：这是 OpenAI 官方客户端吗？**
-A：不是。本项目与 OpenAI 无任何关联，只是一个第三方网页封装层，请遵守 ChatGPT 的服务条款。
-
----
-
-## 📄 License
-
-[MIT](./LICENSE) © zhoudaxiaa
+MIT。ChatDock 是第三方工具，与 OpenAI、Anthropic 无关联。

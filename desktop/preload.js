@@ -12,7 +12,8 @@ function isInternalURL(raw) {
     return host === 'chatgpt.com'
       || host.endsWith('.chatgpt.com')
       || host === 'openai.com'
-      || host.endsWith('.openai.com');
+      || host.endsWith('.openai.com')
+      || host === 'claude.ai' || host.endsWith('.claude.ai');
   } catch { return false; }
 }
 
@@ -35,7 +36,7 @@ function isInConversation(el) {
         return true;
       }
       const testid = node.getAttribute('data-testid') || '';
-      if (testid.startsWith('conversation-turn')) {
+      if (testid.startsWith('conversation-turn') || testid === 'user-message' || testid === 'ai-message' || node.classList?.contains('font-claude-response')) {
         return true;
       }
     }

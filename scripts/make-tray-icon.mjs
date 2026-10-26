@@ -23,7 +23,7 @@ import { deflateSync, inflateSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'desktop');
 
 // ===== 设计网格：所有尺寸都按 16×16 的逻辑网格描述，再按倍率缩放 =====
 const GRID = 16;

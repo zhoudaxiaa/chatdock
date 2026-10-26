@@ -4,6 +4,8 @@
 
 const fs = require('fs');
 const path = require('path');
+const { providers } = require('../shared/providers');
+const validProvider = id => Object.hasOwn(providers, id) ? id : 'chatgpt';
 
 const IS_MAC = process.platform === 'darwin';
 
@@ -37,6 +39,7 @@ function defaultSettings() {
   const shortcuts = {};
   for (const a of ACTIONS) shortcuts[a.id] = a.default;
   return {
+    provider: 'chatgpt',
     shortcuts,
     hideWindowOnCapture: true,     // 截图时先隐藏本应用窗口，避免把自己截进去
     autoPasteAfterCapture: true,   // 截图确认后自动唤起窗口并粘贴到输入框
@@ -135,6 +138,7 @@ function validateSettings(raw) {
   return {
     ok: true,
     value: {
+      provider: validProvider(raw.provider),
       shortcuts,
       hideWindowOnCapture: bool(raw.hideWindowOnCapture, defaults.hideWindowOnCapture),
       autoPasteAfterCapture: bool(raw.autoPasteAfterCapture, defaults.autoPasteAfterCapture),
@@ -178,6 +182,7 @@ function loadSettings(file) {
     return defaults;     // 文件不存在 / 损坏 -> 用默认值
   }
   const merged = {
+    provider: validProvider(raw && raw.provider),
     shortcuts: { ...defaults.shortcuts, ...(raw && raw.shortcuts) },
     hideWindowOnCapture: raw && raw.hideWindowOnCapture,
     autoPasteAfterCapture: raw && raw.autoPasteAfterCapture,
@@ -188,6 +193,7 @@ function loadSettings(file) {
   // 快捷键部分有问题（被手改坏 / 冲突）：快捷键回退默认，其余开关尽量保留
   const bool = (v, d) => (typeof v === 'boolean' ? v : d);
   return {
+    provider: merged.provider,
     shortcuts: defaults.shortcuts,
     hideWindowOnCapture: bool(merged.hideWindowOnCapture, defaults.hideWindowOnCapture),
     autoPasteAfterCapture: bool(merged.autoPasteAfterCapture, defaults.autoPasteAfterCapture),

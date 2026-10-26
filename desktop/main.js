@@ -7,8 +7,10 @@ const path = require('path');
 const http = require('http');
 const settingsLib = require('./app-settings');
 
-const START_URL = 'https://chatgpt.com';
-const WINDOW_TITLE = 'ChatGPT';
+const { providers, getProvider, ownsDomain } = require('../shared/providers');
+const WINDOW_TITLE = 'ChatDock';
+// Keep the original profile so upgrades retain sessions, settings and extensions.
+app.setPath('userData', process.env.CHATDOCK_USER_DATA_DIR || path.join(app.getPath('appData'), 'chatgpt-electron'));
 const BAR_HEIGHT = 36;   // 顶部工具栏高度（px）
 
 // ===== 启动日志 =====
@@ -99,14 +101,15 @@ function startCookieBridge() {
       req.on('data', chunk => { body += chunk; if (body.length > 2 * 1024 * 1024) req.destroy(); });
       req.on('end', async () => {
         try {
-          const { cookies = [] } = JSON.parse(body || '{}');
+          const { cookies = [], provider = 'chatgpt' } = JSON.parse(body || '{}');
+          if (!Object.hasOwn(providers, provider)) throw new Error('未知服务');
           if (!Array.isArray(cookies)) throw new Error('payload 不是数组');
           let count = 0;
           const failed = [];
           for (const c of cookies) {
             if (!c || typeof c.name !== 'string' || typeof c.value !== 'string') continue;
             const host = String(c.domain || '').replace(/^\./, '').replace(/^\[|\]$/g, '');
-            if (!host) continue;
+            if (!host || !ownsDomain(provider, host)) continue;
             const name = c.name;
             // __Host- 前缀的 Cookie 规则严格：必须 Secure、Path=/、且不能带 Domain
             const isHostPrefix = name.startsWith('__Host-');
@@ -127,7 +130,7 @@ function startCookieBridge() {
             if (typeof c.expirationDate === 'number') opts.expirationDate = c.expirationDate;
             if (c.sameSite) opts.sameSite = c.sameSite;
             try {
-              await session.defaultSession.cookies.set(opts);
+              await providerSession(provider).cookies.set(opts);
               count++;
             } catch (err) {
               failed.push(name);
@@ -138,8 +141,11 @@ function startCookieBridge() {
           if (count > 0) {
             send(200, { ok: true, count, skipped: failed });
             // 导入后跳回 ChatGPT 首页，使用新会话
-            const wc = chatWC();
-            if (wc) wc.loadURL(START_URL);
+            // Refresh only that service; syncing cookies must not switch the active service.
+            const view = providerViews.get(provider);
+            if (view && !view.webContents.isDestroyed()) {
+              view.webContents.reload();
+            }
           } else {
             send(400, { ok: false, error: '所有 Cookie 均写入失败: ' + failed.join(',') });
           }
@@ -219,7 +225,7 @@ function spoofChromeUA(wc) {
   const apply = () => {
     // 窗口销毁时 debugger 会触发 detach，此时再碰 wc / wc.debugger 会抛
     // “Object has been destroyed”，整段包在 try 里最稳妥。
-    if (app.isQuiting) return;
+    if (app.isQuiting || wc.isDestroyed()) return;
     try {
       wc.debugger.attach('1.3');
       wc.debugger.sendCommand('Network.setUserAgentOverride', { userAgent: ua, userAgentMetadata: metadata })
@@ -242,6 +248,53 @@ function spoofChromeUA(wc) {
 //   chatView —— ChatGPT 页面（原来的 win.webContents）
 let barView = null;
 let chatView = null;
+const providerViews = new Map();
+function providerSession(id) {
+  return id === 'chatgpt' ? session.defaultSession : session.fromPartition('persist:chatdock-claude');
+}
+
+function createProviderView(id) {
+  const view = new WebContentsView({ webPreferences: {
+    contextIsolation: true, nodeIntegration: false,
+    session: providerSession(id), preload: path.join(__dirname, 'preload.js')
+  } });
+  const wc = view.webContents;
+  neutralizeDragRegions(wc);
+  spoofChromeUA(wc);
+  wc.setWindowOpenHandler(({ url }) => {
+    if (isRecentExternalIntent(url)) { shell.openExternal(url); return { action: 'deny' }; }
+    return { action: 'allow' };
+  });
+  wc.on('will-navigate', (event, url) => {
+    if (isRecentExternalIntent(url)) { event.preventDefault(); shell.openExternal(url); }
+  });
+  wc.on('before-input-event', handleWindowShortcut);
+  wc.loadURL(getProvider(id).url).catch(err => logStartupError('loadProvider', err));
+  providerViews.set(id, view);
+  return view;
+}
+
+function switchProvider(id) {
+  if (!Object.hasOwn(providers, id)) return { ok: false, error: '未知服务' };
+  const nextSettings = { ...settings, provider: id };
+  const saved = settingsLib.saveSettings(SETTINGS_FILE, nextSettings);
+  if (!saved.ok) return saved;
+  const next = providerViews.get(id) || createProviderView(id);
+  if (chatView !== next) {
+    if (chatView) win.contentView.removeChildView(chatView);
+    chatView = next;
+    win.contentView.addChildView(chatView);
+    win.contentView.addChildView(barView);
+  }
+  settings = nextSettings;
+  layoutViews();
+  win.setTitle('ChatDock · ' + getProvider(id).label);
+  if (barView && !barView.webContents.isDestroyed()) barView.webContents.send('bar:provider', id);
+  refreshTray();
+  refreshAppMenu();
+  focusChat();
+  return { ok: true, provider: id };
+}
 
 const chatWC = () => (chatView && !chatView.webContents.isDestroyed() ? chatView.webContents : null);
 
@@ -415,6 +468,7 @@ function setTopmostSetting(on) {
     barView.webContents.send('bar:topmost', settings.alwaysOnTopOnShow);
   }
   refreshTray();
+  refreshAppMenu();
 }
 
 function createWindow() {
@@ -433,13 +487,7 @@ function createWindow() {
   win.setMenuBarVisibility(false);
 
   // ---- ChatGPT 页面 ----
-  chatView = new WebContentsView({
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      preload: path.join(__dirname, 'preload.js')
-    }
-  });
+  chatView = createProviderView(settings.provider);
   // ---- 顶部工具栏 ----
   barView = new WebContentsView({
     webPreferences: {
@@ -451,7 +499,6 @@ function createWindow() {
   win.contentView.addChildView(chatView);
   win.contentView.addChildView(barView);
   layoutViews();
-  neutralizeDragRegions(chatView.webContents);
   ['resize', 'enter-full-screen', 'leave-full-screen', 'maximize', 'unmaximize', 'restore']
     .forEach(ev => win.on(ev, layoutViews));
 
@@ -473,29 +520,6 @@ function createWindow() {
   win.on('maximize', notifyMaximized);
   win.on('unmaximize', notifyMaximized);
 
-  const wc = chatView.webContents;
-  spoofChromeUA(wc);   // 伪装 UA + Client Hints，让 Google 登录不拦截
-
-  // 兜底：页面 JS 用 window.open 打开“刚被 preload 标记过的对话外链”时，
-  // 拦截并转默认浏览器；其余新窗口保持 Electron 默认行为（方案A：不干预）
-  wc.setWindowOpenHandler(({ url }) => {
-    if (isRecentExternalIntent(url)) {
-      shell.openExternal(url);
-      return { action: 'deny' };
-    }
-    return { action: 'allow' };
-  });
-
-  // 兜底2：对话外链若以同窗口导航方式打开，同样拦截转默认浏览器
-  wc.on('will-navigate', (event, url) => {
-    if (isRecentExternalIntent(url)) {
-      event.preventDefault();
-      shell.openExternal(url);
-    }
-  });
-
-  // 窗口内快捷键（默认 Ctrl+Q 退出：点 X 只是隐藏窗口，怕用户找不到退出入口）
-  wc.on('before-input-event', handleWindowShortcut);
   barView.webContents.on('before-input-event', handleWindowShortcut);
 
   lockLocalPage(barView.webContents);
@@ -509,7 +533,7 @@ function createWindow() {
     })
     .catch(err => logStartupError('loadBar', err));
 
-  wc.loadURL(START_URL);
+  win.setTitle('ChatDock · ' + getProvider(settings.provider).label);
   // 首次应用完整的置顶策略（层级 + 跨桌面可见）。放在 show 之前调用，
   // 这样 mac 上那次进程类型转换发生在窗口还不可见的时候，用户看不到闪。
   // 之后只有置顶开关真的变化时才会再动 setVisibleOnAllWorkspaces。
@@ -526,12 +550,13 @@ function createWindow() {
   });
   win.on('closed', () => {
     // 子视图的 webContents 不会随窗口自动销毁，需要手动关
-    for (const v of [chatView, barView]) {
+    for (const v of [...providerViews.values(), barView]) {
       try {
         const w = v && v.webContents;
         if (w && !w.isDestroyed()) w.close();
       } catch (err) { logQuit('关闭子视图失败：' + err.message); }
     }
+    providerViews.clear();
     chatView = null;
     barView = null;
     win = null;
@@ -797,7 +822,8 @@ async function pasteIntoChat() {
   try {
     // 优先聚焦 ChatGPT 的输入框；找不到就沿用当前焦点（如果它本身可编辑），再不行退而求其次
     await wc.executeJavaScript(`(() => {
-      const prompt = document.querySelector('#prompt-textarea');
+      const selectors = ${JSON.stringify(getProvider(settings.provider).composers)};
+      const prompt = selectors.map(s => document.querySelector(s)).find(el => el && el.getBoundingClientRect().width > 0);
       if (prompt) { prompt.focus(); return; }
       const a = document.activeElement;
       const editable = a && (a.isContentEditable || /^(INPUT|TEXTAREA)$/.test(a.tagName));
@@ -890,7 +916,8 @@ ipcMain.handle('settings:save', (e, raw) => {
   const applied = applyGlobalShortcuts(v.value.shortcuts, true);
   if (!applied.ok) return applied;
 
-  settings = v.value;
+  // The settings page may have been opened before a service switch.
+  settings = { ...v.value, provider: previous.provider };
   // 置顶开关改动立即生效，不必重启；设置窗口自己也要跟着置顶，
   // 否则它会被刚刚变成置顶的主窗口盖住（保存有警告时窗口不会自动关闭）
   // 只在开关真的变了才动层级：这个调用带进程类型转换，会闪一下窗口
@@ -918,6 +945,7 @@ ipcMain.handle('settings:save', (e, raw) => {
     barView.webContents.send('bar:topmost', settings.alwaysOnTopOnShow);
   }
   refreshTray();
+  refreshAppMenu();
   // 保存成功但设置窗口仍然开着（有警告时不自动关）：它还在前台，
   // 继续暂停全局热键，免得用户接着录入键位时又被系统拦截；失焦 / 关闭后会自动恢复
   if (settingsWin && !settingsWin.isDestroyed() && settingsWin.isFocused()) unregisterGlobals();
@@ -930,6 +958,9 @@ ipcMain.on('settings:close', (e) => {
 ipcMain.on('settings:quit', (e) => {
   if (fromSettingsWin(e)) quitApp('设置窗口');
 });
+
+ipcMain.handle('bar:get-provider', (e) => fromBar(e) ? settings.provider : null);
+ipcMain.handle('bar:set-provider', (e, id) => fromBar(e) ? switchProvider(id) : { ok: false });
 
 ipcMain.handle('bar:get-shortcuts', (e) => (fromBar(e) ? settings.shortcuts : null));
 ipcMain.handle('bar:get-topmost', (e) => (fromBar(e) ? !!settings.alwaysOnTopOnShow : null));
@@ -961,6 +992,8 @@ function showBarMenu() {
   if (!win || win.isDestroyed()) return;
   const k = settings.shortcuts;
   Menu.buildFromTemplate([
+    ...providerMenuItems(),
+    { type: 'separator' },
     { label: '设置…', click: openSettings },
     { label: `区域截图\t${prettyAccel(k.screenshot)}`, click: () => { void startScreenshot(); } },
     {
@@ -975,6 +1008,30 @@ function showBarMenu() {
   ]).popup({ window: win });
 }
 
+function providerMenuItems() {
+  return Object.values(providers).map(p => ({
+    label: p.label, type: 'radio', checked: settings.provider === p.id,
+    click: () => { const result = switchProvider(p.id); if (!result.ok) logStartupError('switchProvider', new Error(result.error)); }
+  }));
+}
+
+function refreshAppMenu() {
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    ...(IS_MAC ? [{ label: 'ChatDock', submenu: [
+      { label: '设置…', click: openSettings }, { type: 'separator' },
+      { label: '退出 ChatDock', click: () => quitApp('应用菜单') }
+    ] }] : []),
+    { label: '服务', submenu: providerMenuItems() },
+    { label: '编辑', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
+    { label: '窗口', submenu: [{ label: '设置…', click: openSettings },
+      { label: '区域截图', click: () => { void startScreenshot(); } },
+      { label: '窗口置顶', type: 'checkbox', checked: !!settings.alwaysOnTopOnShow, click: item => setTopmostSetting(item.checked) },
+      { label: '重新加载当前服务', click: () => chatWC()?.reload() },
+      { label: '开发者工具', click: () => chatWC()?.toggleDevTools() }, { label: '隐藏窗口', click: () => win?.hide() }
+    ] }
+  ]));
+}
+
 // ===== 系统托盘 =====
 // 关掉窗口只是隐藏，托盘图标常驻：左键单击切换显示/隐藏，右键菜单可退出
 
@@ -982,8 +1039,10 @@ function showBarMenu() {
 function refreshTray() {
   if (!tray || tray.isDestroyed()) return;
   const k = settings.shortcuts;
-  tray.setToolTip(`ChatGPT 套壳（${prettyAccel(k.toggleWindow)} 或左键单击托盘图标显示/隐藏）`);
+  tray.setToolTip(`ChatDock · ${getProvider(settings.provider).label}（${prettyAccel(k.toggleWindow)} 或左键单击托盘图标显示/隐藏）`);
   tray.setContextMenu(Menu.buildFromTemplate([
+    ...providerMenuItems(),
+    { type: 'separator' },
     { label: `显示 / 隐藏窗口\t${prettyAccel(k.toggleWindow)}`, click: toggleWindow },
     { label: `区域截图\t${prettyAccel(k.screenshot)}`, click: () => { void startScreenshot(); } },
     {
@@ -1025,6 +1084,7 @@ function createTray() {
   tray = new Tray(createTrayImage());
   tray.on('click', toggleWindow);
   refreshTray();
+  refreshAppMenu();
   return tray;
 }
 
@@ -1057,6 +1117,7 @@ if (!gotSingleInstanceLock) {
       app.quit();
       return;
     }
+    refreshAppMenu();
     try { createTray(); } catch (err) { logStartupError('createTray', err); }
 
     try {

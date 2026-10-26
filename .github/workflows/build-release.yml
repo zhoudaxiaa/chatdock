@@ -30,6 +30,14 @@ jobs:
       tag: ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm check
+      - run: pnpm test
       - name: Resolve and validate version
         id: meta
         env:
@@ -54,7 +62,7 @@ jobs:
             --title "$RELEASE_TAG" --notes-file RELEASE_NOTES.md
 
   # ---------------------------------------------------------------
-  # 1) 浏览器扩展「ChatGPT Session Bridge」插件包
+  # 1) ChatDock 浏览器侧边栏扩展
   # ---------------------------------------------------------------
   extension:
     needs: release
@@ -64,21 +72,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Read extension version
-        id: meta
-        run: |
-          VERSION=$(node -p "require('./browser-extension/manifest.json').version")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Extension version: $VERSION"
-
-      - name: Package extension as zip
-        run: |
-          mkdir -p dist
-          cd browser-extension
-          zip -r "../dist/chatgpt-session-bridge-v${{ steps.meta.outputs.version }}.zip" . \
-            -x "*.DS_Store" -x "__MACOSX/*"
-          cd ..
-          ls -lh dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build sidebar extension
+        run: node scripts/build-extension.mjs
 
       - name: Upload extension artifact
         uses: actions/upload-artifact@v4
@@ -118,17 +116,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build ${{ matrix.target }} ${{ matrix.arch }}
-        run: npm run build:${{ matrix.target }} -- --${{ matrix.arch }} --publish never
+        run: pnpm build:${{ matrix.target }} --${{ matrix.arch }} --publish never
 
       - name: Upload build artifacts (workflow_dispatch)
         if: github.event_name == 'workflow_dispatch'

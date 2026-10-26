@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
-<title>toolbar</title>
+<title>ChatDock</title>
 <style>
   :root {
     --bg: #f4f4f4; --fg: #333; --muted: #888; --border: #dcdcdc; --hover: #e4e4e4;
@@ -54,31 +54,27 @@
   .win-controls button.wc-btn svg { width: 10px; height: 10px; stroke-width: 1.1; }
   .win-controls button.wc-close:hover { background: #e81123; color: #fff; }
 
-  /* 置顶开关：开启时高亮，一眼能看出窗口是否浮在最上层 */
-  #pin.on { background: var(--hover); color: #10a37f; }
-  #pin.on svg { stroke-width: 2; }
+  .providers { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; }
+  .providers button { height: 24px; font-size: 12px; }
+  .providers button[aria-pressed="true"] { background: var(--hover); font-weight: 600; }
+  @media (max-width: 560px) { .title { display: none; } button { padding: 0 7px; } }
 </style>
 </head>
 <body>
-  <span class="title">ChatGPT</span>
+  <span class="title">ChatDock</span>
+  <div class="providers" role="group" aria-label="聊天服务">
+    <button data-provider="chatgpt" aria-pressed="true">ChatGPT</button>
+    <button data-provider="claude" aria-pressed="false">Claude</button>
+  </div>
 
   <button id="settings" title="设置">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
     <span>设置</span>
   </button>
 
-  <button id="shot" title="区域截图">
-    <svg viewBox="0 0 24 24"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>
-    <span>截图</span><span class="hint" id="shotKey"></span>
-  </button>
-
-  <button id="pin" title="窗口置顶">
-    <svg viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 3h6l-.5 5.3 2.5 3.2a1 1 0 0 1-.8 1.5H7.8a1 1 0 0 1-.8-1.5l2.5-3.2L9 3z"/></svg>
-    <span>置顶</span>
-  </button>
-
   <div class="drag-spacer"></div>
 
+  <button id="menu" title="功能菜单：截图、置顶、退出" aria-label="功能菜单">☰</button>
   <div class="win-controls">
     <button class="wc-btn" id="minBtn" title="最小化">
       <svg viewBox="0 0 10 10"><path d="M1 5h8"/></svg>
@@ -93,27 +89,20 @@
 
 <script>
   document.body.classList.add(window.barApi.platform);
-  const pretty = (s) => String(s || '').replace(/Control/g, 'Ctrl').replace(/Meta/g, 'Win/Cmd');
-  const shotKey = document.getElementById('shotKey');
-  const showKeys = (shortcuts) => { shotKey.textContent = shortcuts ? pretty(shortcuts.screenshot) : ''; };
-
-  document.getElementById('shot').addEventListener('click', () => window.barApi.screenshot());
   document.getElementById('settings').addEventListener('click', () => window.barApi.openSettings());
-
-  // 置顶开关：顶栏按钮 / 托盘菜单 / 设置页三处状态保持一致
-  const pinBtn = document.getElementById('pin');
-  const showTopmost = (on) => {
-    pinBtn.classList.toggle('on', !!on);
-    pinBtn.title = on
-      ? '窗口已置顶（浮在其他应用上层），点击取消'
-      : '窗口未置顶，点击让它浮在其他应用上层';
-  };
-  pinBtn.addEventListener('click', () => window.barApi.toggleTopmost());
-  window.barApi.getTopmost().then(showTopmost).catch(() => {});
-  window.barApi.onTopmost(showTopmost);
-
-  window.barApi.getShortcuts().then(showKeys).catch(() => {});
-  window.barApi.onShortcuts(showKeys);
+  document.getElementById('menu').addEventListener('click', () => window.barApi.contextMenu());
+  function showProvider(id) {
+    document.querySelectorAll('[data-provider]').forEach(btn => {
+      btn.setAttribute('aria-pressed', String(btn.dataset.provider === id));
+    });
+  }
+  window.barApi.getProvider().then(showProvider);
+  window.barApi.onProvider(showProvider);
+  document.querySelectorAll('[data-provider]').forEach(btn => btn.addEventListener('click', async () => {
+    const result = await window.barApi.setProvider(btn.dataset.provider);
+    if (!result.ok) { btn.title = result.error || '切换失败'; return; }
+    showProvider(result.provider);
+  }));
 
   // 顶栏右键 -> 设置 / 截图 / 隐藏 / 退出（退出入口，托盘图标被系统收起来时也能用）
   document.addEventListener('contextmenu', (e) => {
