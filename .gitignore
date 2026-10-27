@@ -1,5 +1,7 @@
 # Dependencies
 node_modules/
+# 项目用 pnpm，锁文件只认 pnpm-lock.yaml；npm 误装生成的锁文件不要入库
+package-lock.json
 
 # Build output (electron-builder artifacts)
 dist/
