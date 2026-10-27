@@ -35,12 +35,12 @@ dist/extension/                可直接加载的扩展产物（生成）
 
 - 顶栏直接选择 ChatGPT / Claude，切换时保留两个页面；第二个服务按需加载。
 - 「设置」后面的刷新按钮仅刷新当前服务，并保留当前页面地址；成功导入 Cookie 后，对应的已打开服务页面会自动刷新。
-- macOS 保持普通应用身份和 Dock 图标，置顶、打开设置及隐藏窗口不会将应用转换为无 Dock 的辅助应用。
+- macOS 默认以「辅助应用」形态运行：置顶能压住其他应用的全屏窗口，代价是没有 Dock 图标、⌘Tab 里也不出现（托盘图标与全局快捷键不受影响）。不想要可在「设置 → 窗口」关掉「连其他应用的全屏窗口也压住」，Dock 图标立刻回来，无需重启。
 - 顶栏右侧 **☰** 菜单提供截图、置顶、设置、隐藏与退出；也可用托盘菜单，macOS 还可使用系统「服务」菜单切换。
 - 默认 `Control+Space` 唤起 / 隐藏，`Control+Alt+A` 区域截图，`Control+Q` 退出，均可在设置中修改。
 - 关闭窗口只会隐藏到托盘。截图可复制并粘贴到当前服务的输入框。
 - 兼容旧版桌面数据：沿用 `com.zhoudaxiaa.chatgpt-electron` 应用 ID、`chatgpt-electron` 用户数据目录和 ChatGPT 默认会话；Claude 使用独立持久化会话。
-- macOS 安装包未签名、公证；Cloudflare、Google OAuth 等登录校验仍由网站决定，无法保证所有账号与网络条件都通过。
+- macOS 安装包未签名、公证（只有 ad-hoc 签名）。首次打开会被 Gatekeeper 拦下，任选一种方式放行：在「应用程序」里**右键 → 打开**；或到「系统设置 → 隐私与安全性」底部点「仍要打开」；或执行 `xattr -dr com.apple.quarantine /Applications/ChatDock.app`。Cloudflare、Google OAuth 等登录校验仍由网站决定，无法保证所有账号与网络条件都通过。
 
 ## 浏览器扩展
 
