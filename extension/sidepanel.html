@@ -366,13 +366,18 @@
       }
     }
     body { display: flex; flex-direction: column; }
-    .provider-bar { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 7px 8px; border-bottom: 1px solid var(--btn-hover-border); flex-shrink: 0; }
-    .provider-choice { display: inline-flex; align-items: center; gap: 0; border: 1px solid transparent; border-radius: 8px; }
-    .provider-choice:has([aria-pressed="true"]) { background: var(--btn-hover); border-color: var(--btn-hover-border); }
-    .provider-bar button { border: 0; background: transparent; color: var(--text-strong); padding: 7px 9px; border-radius: 7px; cursor: pointer; font: 12px system-ui; }
-    .provider-bar button:hover { background: var(--btn-hover); }
-    .provider-bar button[aria-pressed="true"] { font-weight: 650; }
-    .provider-bar .open-provider { display: inline-flex; align-items: center; justify-content: center; width: 25px; height: 28px; padding: 4px; margin-right: 2px; color: var(--text-hint); }
+    /*
+      顶栏：纯文字 + 小箭头，没有按钮边框和底色。
+      选中项只靠「字重 + 颜色」区分（加粗、正文色），未选中用弱化色；
+      ↗ 图标始终弱化，hover 时才提亮 —— 这样两个服务并排时不会被方框切割。
+    */
+    .provider-bar { display: flex; justify-content: center; align-items: center; gap: 40px; padding: 11px 10px; flex-shrink: 0; }
+    .provider-choice { display: inline-flex; align-items: center; gap: 16px; }
+    .provider-bar button { border: 0; background: transparent; padding: 2px 0; cursor: pointer; font-family: inherit; font-size: 15px; font-weight: 500; letter-spacing: -0.01em; color: var(--text-hint); transition: color 120ms ease; }
+    .provider-bar button:hover { color: var(--text-strong); }
+    .provider-bar button[aria-pressed="true"] { font-weight: 650; color: var(--text-strong); }
+    .provider-bar .open-provider { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; padding: 0; color: var(--text-hint); opacity: 0.55; transition: opacity 120ms ease, color 120ms ease; }
+    .provider-bar .open-provider:hover { color: var(--text-strong); opacity: 1; }
     .open-provider svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
     .provider-frame[hidden] { display: none; }
   </style>
