@@ -11,8 +11,9 @@
  *
  * 前置约定：
  *   - 版本号只改 package.json（唯一来源），tag 由脚本派生，避免两处不一致；
- *   - RELEASE_NOTES.md 的首个标题必须是 `## v<版本号>`——工作流用它的内容
- *     覆盖 Release 正文，标题对不上说明忘更新说明或忘改版本，直接拒绝发布；
+ *   - RELEASE_NOTES.md 的首个标题必须是 `## v<版本号>`——脚本只取这一段作为
+ *     Release 正文（旧版本留在文件里但不上 Release 页面），标题对不上说明
+ *     忘更新说明或忘改版本，直接拒绝发布；
  *   - 工作区必须干净、必须已推送，脚本不会 `git add -A`、也不会强推 tag。
  *
  * 凭据：优先 GITHUB_TOKEN / GH_TOKEN 环境变量，否则读 git credential helper
@@ -22,6 +23,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { extractVersionSection, firstHeadingVersion, readReleaseNotes } from './release-notes.mjs';
 
 // 项目根目录（本文件在 scripts/ 下）
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -96,16 +98,21 @@ if (!/^\d+\.\d+\.\d+$/.test(VERSION)) {
 }
 
 const notesPath = path.join(ROOT, 'RELEASE_NOTES.md');
-if (!existsSync(notesPath)) die('找不到 RELEASE_NOTES.md（工作流用它作为 Release 正文）');
-const notes = readFileSync(notesPath, 'utf8');
-const heading = (notes.split('\n').find((l) => /^#{1,2}\s/.test(l)) || '').trim();
-const headingVersion = (heading.match(/(\d+\.\d+\.\d+)/) || [])[1];
+if (!existsSync(notesPath)) die('找不到 RELEASE_NOTES.md（它同时是 Release 正文的来源）');
+const allNotes = readReleaseNotes();
+// 校验「说明写了没」：首个标题必须是当前版本，否则说明忘了更新变更日志
+const headingVersion = firstHeadingVersion(allNotes);
 if (headingVersion !== VERSION) {
   die(
-    `RELEASE_NOTES.md 的首个标题是「${heading || '(空)'}」，与 package.json 的 ${VERSION} 对不上`,
-    '发布说明是 Release 正文的唯一来源，请先把标题与正文改成这一版的内容（旧版日志折叠进 <details>）。'
+    `RELEASE_NOTES.md 的首个标题是「## v${headingVersion || '(空)'}」，与 package.json 的 ${VERSION} 对不上`,
+    '发布说明是 Release 正文的唯一来源，请先把标题与正文改成这一版的内容。'
   );
 }
+// 只把「当前版本」这一段作为 Release 正文；旧版本留在文件里，不上 Release 页面
+const notes = extractVersionSection(allNotes, VERSION);
+if (!notes) die(`RELEASE_NOTES.md 里找不到 ## v${VERSION} 这一段`);
+// tag 备注用这段的摘要行（标题下面第一句），比「v1.4.0 — v1.4.0」有信息量
+const summary = notes.split('\n').find((l) => l.trim() && !l.startsWith('#')) || '';
 
 /* ------------------------------ 仓库前置检查 ------------------------------ */
 
@@ -219,7 +226,7 @@ if (DRY) {
 }
 
 log(`创建并推送 tag ${TAG}`);
-git(['tag', '-a', TAG, '-m', `${TAG} — ${heading.replace(/^#+\s*/, '') || 'release'}`]);
+git(['tag', '-a', TAG, '-m', `${TAG} — ${summary || 'release'}`]);
 const pushed = await gitNet(['push', 'origin', TAG], { attempts: 4, waitMs: 6000 });
 if (!pushed.ok) {
   // 推送失败就回收本地 tag，避免下次运行被「本地已存在 tag」挡住

@@ -58,8 +58,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ steps.meta.outputs.tag }}
         run: |
+          # 只取当前版本那一段作为正文，别把整本变更日志塞进 Release
+          node scripts/release-notes.mjs "$RELEASE_TAG" > release-notes.md
           gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" \
-            --title "$RELEASE_TAG" --notes-file RELEASE_NOTES.md
+            --title "$RELEASE_TAG" --notes-file release-notes.md
 
   # ---------------------------------------------------------------
   # 1) ChatDock 浏览器侧边栏扩展
@@ -146,7 +148,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.release.outputs.tag }}
-          body_path: RELEASE_NOTES.md
+          # 不要设 body_path：Release 正文由发布脚本写入（只含当前版本），
+          # 这里再传一次会把整本变更日志盖上去。
           files: |
             dist/*.exe
             dist/*.dmg
