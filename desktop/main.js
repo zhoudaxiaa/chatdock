@@ -1,6 +1,6 @@
 const {
   app, BrowserWindow, WebContentsView, globalShortcut, session, shell, ipcMain,
-  Tray, Menu, clipboard, nativeImage
+  Tray, Menu, clipboard, ClipboardItem, nativeImage
 } = require('electron');
 const fs = require('fs');
 const path = require('path');
@@ -42,7 +42,16 @@ let bridgeServer = null;   // 退出时要主动关掉，别让它拖着进程
 
 // 去掉 UA 里的 Electron / chatgpt-electron 标识，避免 Google 登录提示
 // “此浏览器或应用可能不安全”（disallowed_useragent）而拦截 OAuth
-app.userAgentFallback = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.6723.191 Safari/537.36';
+//
+// 版本号一律从运行时读（process.versions.chrome 就是当前 Chromium 版本），
+// 不再写死：升级 Electron 时 UA 自动跟着走，也不会出现「UA 说 130、引擎其实是 156」
+// 这种自曝身份的破绽。下面 spoofChromeUA() 的 Client Hints 用的是同一组常量。
+// 兜底值只在拿不到 process.versions 的环境里生效（单测沙箱、极端裁剪的运行时）。
+const CHROME_VERSION = String((process.versions && process.versions.chrome) || '156.0.8078.48');
+const CHROME_MAJOR = CHROME_VERSION.split('.')[0];                     // 例：156
+const SPOOF_UA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_VERSION} Safari/537.36`;
+
+app.userAgentFallback = SPOOF_UA;
 
 // 只接收 preload 上报的「对话正文里」的外部链接，交给系统默认浏览器打开
 // 其余任何链接/导航都不再拦截，保持页面默认行为
@@ -183,7 +192,11 @@ function loadExtensions() {
       const p = path.join(dir, ent.name);
       try {
         if (ent.isDirectory() && fs.existsSync(path.join(p, 'manifest.json'))) {
-          session.defaultSession.loadExtension(p)
+          // Electron 36 起扩展管理搬到 session.extensions，session.loadExtension
+          // 变成「已废弃」（仍能用，但迟早移除）。这里优先走新入口，
+          // 老版本 Electron 上自动退回旧方法，避免升级过程中两边都要改。
+          const extApi = session.defaultSession.extensions || session.defaultSession;
+          extApi.loadExtension(p)
             .then(ext => console.log('[扩展已加载]', ext.name))
             .catch(err => console.warn('[扩展加载失败]', ent.name, err.message));
         }
@@ -201,16 +214,16 @@ function loadExtensions() {
 // （Sec-CH-UA / navigator.userAgentData）检测到 "Electron" 品牌，
 // 必须连 UA-CH 元数据一起覆盖，否则 Google 登录会提示“此浏览器或应用可能不安全”
 function spoofChromeUA(wc) {
-  const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.6723.191 Safari/537.36';
+  const ua = SPOOF_UA;
   const metadata = {
     brands: [
-      { brand: 'Chromium', version: '130' },
-      { brand: 'Google Chrome', version: '130' },
+      { brand: 'Chromium', version: CHROME_MAJOR },
+      { brand: 'Google Chrome', version: CHROME_MAJOR },
       { brand: 'Not?A_Brand', version: '99' }
     ],
     fullVersionList: [
-      { brand: 'Chromium', version: '130.0.6723.191' },
-      { brand: 'Google Chrome', version: '130.0.6723.191' },
+      { brand: 'Chromium', version: CHROME_VERSION },
+      { brand: 'Google Chrome', version: CHROME_VERSION },
       { brand: 'Not?A_Brand', version: '99.0.0.0' }
     ],
     platform: 'Windows',
@@ -371,15 +384,95 @@ function neutralizeDragRegions(wc) {
 // macOS 用 hiddenInset，保留左上角原生红绿灯。
 const IS_MAC = process.platform === 'darwin';
 
-// ===== 置顶（浮在其他应用上层）=====
+// ===== 置顶（浮在其他应用上层，含别人的全屏 Space）=====
 // 快捷键唤起时窗口必须真正压在最前面。Windows 有前台锁（foreground lock）：
 // 一个被 hide() 过、或由后台进程 show() 出来的窗口，常常只在任务栏闪一下，
 // 实际仍被当前应用盖住 —— 表现就是「按了快捷键，窗口没出来 / 出来了但被挡住」。
-// 所以统一走 raiseWindow()：先 show 显示，再 setAlwaysOnTop 压层级，最后 moveTop() 兜底
-// （顺序很重要：macOS 上 hide→show 会重置窗口层级，置顶必须在 show 之后再设置）。
-// floating 负责窗口层级；macOS 全屏 Space 的可见性由下面的工作区配置负责。
+//
+// 整套策略只有三个动作，顺序固定，任何入口都只调 applyTopmostPolicy()：
+//   1) 进程类型：macOS 要浮在别人的全屏 Space 之上，进程必须是 UIElement（Dock 隐藏）
+//   2) 集合行为：CanJoinAllSpaces + FullScreenAuxiliary
+//   3) 窗口层级：floating
+// 顺序不能反：进程类型决定「能不能进那个 Space」，层级只决定「在那个 Space 里排第几」。
 const TOP_LEVEL = 'floating';
-const workspaceVisibility = new WeakMap();
+const appliedPolicy = new WeakMap();   // window -> { on, float }，用来跳过无变化的重设
+
+// 当前设置想要的目标策略。float 一定蕴含 on。
+function desiredPolicy() {
+  const on = !!(settings && settings.alwaysOnTopOnShow);
+  const float = IS_MAC && on && !!(settings && settings.floatAboveFullScreen);
+  return { on, float };
+}
+
+function samePolicy(a, b) {
+  return !!a && !!b && a.on === b.on && a.float === b.float;
+}
+
+// ---- 1) 进程类型 ----
+// Electron 源码（shell/browser/native_window_mac.mm）写得很直白：
+//   "In order for NSWindows to be visible on fullscreen we need to invoke app.dock.hide()
+//    since Apple changed the underlying functionality of NSWindows starting with 10.14 to
+//    disallow NSWindows from floating on top of fullscreen apps."
+// 所以在 macOS 上「浮在别人全屏之上」和「Dock 图标 / ⌘Tab」互斥，
+// 由设置项 floatAboveFullScreen 选一个（托盘图标、全局快捷键都不受影响）。
+// 每次 TransformProcessType 都会让窗口短暂消失再重新激活，所以状态对了就立刻返回。
+function syncDockPolicy(policy, attempt = 0) {
+  if (!IS_MAC || !app.dock || typeof app.dock.isVisible !== 'function') return;
+  const targetVisible = !policy.float;    // 要全屏置顶 -> Dock 必须藏起来
+  let visible;
+  try { visible = app.dock.isVisible(); } catch { return; }
+  if (visible === targetVisible) return;  // 已经是目标状态，别再转一次
+  try {
+    if (policy.float) {
+      app.dock.hide();
+    } else {
+      app.setActivationPolicy('regular');
+      void app.dock.show().catch(err => logStartupError('showDock', err));
+    }
+  } catch (err) {
+    console.warn('[置顶] 同步 Dock 显示状态失败：' + err.message);
+    return;
+  }
+  // Electron 的 DockHide 在 DockShow 之后 1 秒内是空操作（它自己防「Dock 上留多个图标」），
+  // 所以「刚关又开」这种快速切换要补一枪，否则会停在一个既没 Dock 又进不了全屏的中间态。
+  if (attempt < 2) {
+    setTimeout(() => {
+      if (!app.dock || typeof app.dock.isVisible !== 'function') return;
+      let now;
+      try { now = app.dock.isVisible(); } catch { return; }
+      if (now !== targetVisible) syncDockPolicy(policy, attempt + 1);
+    }, 1100);
+  }
+}
+
+// ---- 2) 集合行为 + 3) 窗口层级 ----
+// skipTransformProcessType 恒为 true：进程类型已经由 syncDockPolicy 单独负责，
+// 这里再让 Electron 转一次就会多一次 TransformProcessType（窗口白闪）。
+function applyWindowPolicy(target, policy, force = false) {
+  if (!target || target.isDestroyed()) return;
+  if (!force && samePolicy(appliedPolicy.get(target), policy)) return;
+  if (IS_MAC && typeof target.setVisibleOnAllWorkspaces === 'function') {
+    try {
+      target.setVisibleOnAllWorkspaces(policy.on, {
+        visibleOnFullScreen: policy.float,
+        skipTransformProcessType: true
+      });
+    } catch (err) {
+      console.warn('[置顶] 设置跨桌面可见失败：' + err.message);
+    }
+  }
+  setLevel(policy.on, target);
+  appliedPolicy.set(target, policy);
+}
+
+// 主窗口 + 设置窗口共用的唯一入口。force = 用户显式切换 / 新建窗口时无条件重设。
+function applyTopmostPolicy(force = false) {
+  const policy = desiredPolicy();
+  syncDockPolicy(policy);                 // 进程级，只做一次
+  applyWindowPolicy(win, policy, force);
+  applyWindowPolicy(settingsWin, policy, force);
+  return policy;
+}
 
 // 只负责「窗口层级」这一件事：开销小，可以反复调用，不会让窗口闪一下。
 function setLevel(on, target = win) {
@@ -389,40 +482,6 @@ function setLevel(on, target = win) {
   } catch (err) {
     console.warn('[置顶] 设置层级失败：' + err.message);
   }
-}
-
-// Workspace visibility must not transform the whole app into a UIElement:
-// that removes it from the Dock and macOS's normal application list.
-// Keep the foreground application policy while setting per-window collection behaviour.
-function applyWorkspacesVisible(on, target = win) {
-  if (!IS_MAC || !target || target.isDestroyed()) return;
-  if (typeof target.setVisibleOnAllWorkspaces !== 'function') return;
-  const visible = !!on;
-  if (workspaceVisibility.get(target) === visible) return;
-  try {
-    target.setVisibleOnAllWorkspaces(visible, {
-      visibleOnFullScreen: visible,
-      skipTransformProcessType: true
-    });
-    workspaceVisibility.set(target, visible);
-  } catch (err) {
-    console.warn('[置顶] 设置跨桌面可见失败：' + err.message);
-  }
-}
-
-function setWindowTopmost(target, on) {
-  // 先配置工作区可见性，再恢复窗口层级。
-  applyWorkspacesVisible(on, target);
-  setLevel(on, target);
-}
-
-// 主窗口、设置窗口共享同一策略，所有入口切换置顶时同步更新。
-function setTopmost(on) {
-  // 先完成两个窗口的工作区配置，再统一恢复层级。
-  applyWorkspacesVisible(on, win);
-  applyWorkspacesVisible(on, settingsWin);
-  setWindowTopmost(win, on);
-  setWindowTopmost(settingsWin, on);
 }
 
 // 把窗口强行提到本层最前。
@@ -440,7 +499,7 @@ function nudgeToFront() {
 // macOS 会在本轮 runloop 末尾再重排一次窗口顺序，所以同步顶完还要补一枪才稳。
 function promote() {
   if (!win || win.isDestroyed()) return;
-  if (!settings || !settings.alwaysOnTopOnShow) return;
+  if (!desiredPolicy().on) return;
   setLevel(true);
   nudgeToFront();
   setTimeout(nudgeToFront, 80);
@@ -451,18 +510,25 @@ function raiseWindow() {
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
   win.show();
+  // UIElement（accessory）应用不会因为 show() 就自动变成前台应用，
+  // 键盘焦点还留在原来那个 App 里。要全屏置顶时进程必然是 UIElement，
+  // 所以这里显式抢一次激活，否则「窗口浮上来了但打字打不进去」。
+  if (desiredPolicy().float) {
+    try { app.focus({ steal: true }); } catch { /* 忽略 */ }
+  }
   win.focus();
   // macOS 上 hide→show 会把窗口层级重置回普通层（always-on-top 丢失），
   // 所以置顶必须在 show() **之后**再压一次。这里只碰 level 和 orderFront，
-  // 工作区配置只在置顶开关变化时更新；唤起路径只恢复层级和顺序。
+  // 集合行为 / 进程类型只在开关变化时更新；唤起路径只恢复层级和顺序。
   promote();
   focusChat();
 }
 
-// 顶栏「置顶」按钮 / 托盘菜单 / 设置页共用的开关：立刻生效并写回配置文件
+// 顶栏菜单 / 托盘菜单 / 应用菜单 / 设置页共用的开关：立刻生效并写回配置文件
 function setTopmostSetting(on) {
   settings.alwaysOnTopOnShow = !!on;
-  setTopmost(settings.alwaysOnTopOnShow);
+  // 用户显式切换：无视缓存整套重设一遍（含进程类型），否则「刚关又开」不会真正生效
+  applyTopmostPolicy(true);
   // 光改 level 不会让窗口跳到同层最前，还得 orderFront 一次 ——
   // 这也正是「手动关一下再开就好了」的原因，现在把这一步补上，不必再手动开关
   if (settings.alwaysOnTopOnShow) promote();
@@ -538,8 +604,9 @@ function createWindow() {
     .catch(err => logStartupError('loadBar', err));
 
   win.setTitle('ChatDock · ' + getProvider(settings.provider).label);
-  // 首次显示前完成置顶与工作区配置；后续仅在开关变化时更新工作区状态。
-  setTopmost(!!settings.alwaysOnTopOnShow);
+  // 首次显示前把整套策略落到位（进程类型 -> 集合行为 -> 层级），
+  // 此时窗口还是隐藏的，macOS 那次进程类型转换不会闪到用户。
+  applyTopmostPolicy(true);
   // 首次显示也走同一套置顶逻辑，保证启动就是最前面那一层
   raiseWindow();
 
@@ -737,33 +804,83 @@ const delay = (ms) => new Promise(r => setTimeout(r, ms));
 // 一旦截图流程没走到那一步（库没发 cancel / save 事件、或超过 2 分钟限制后重入
 // 把 capture 覆盖掉），置顶就一直是关的，表现同样是「偶发置顶失效」。
 function suspendTopmost() {
-  if (!settings || !settings.alwaysOnTopOnShow || topmostSuspended) return;
+  if (!desiredPolicy().on || topmostSuspended) return;
   topmostSuspended = true;
-  setLevel(false);
+  // 只降层级，不动进程类型和集合行为：截图层要的正是「同一个 Space 里排最前」
+  setLevel(false, win);
+  setLevel(false, settingsWin);
 }
 
 function resumeTopmost() {
   if (!topmostSuspended) return;
   topmostSuspended = false;
+  const policy = desiredPolicy();
+  setLevel(policy.on, win);
+  setLevel(policy.on, settingsWin);
   promote();
+}
+
+// 把截图写进系统剪贴板。
+// Electron 44 起 clipboard 模块按 W3C Clipboard API 重构：
+//   - writeImage() / readImage() 被移除
+//   - write() 改为接收 ClipboardItem 数组，并且返回 Promise
+// 必须 await 完再进入粘贴流程，否则 finishCapture() 里的 Cmd/Ctrl+V
+// 可能赶在写入之前执行，粘进去的还是上一次的内容。
+async function writeImageToClipboard(raw) {
+  // 跨进程送过来的是 Uint8Array（截图库的 preload 在 Electron 45 里拿不到 Buffer，
+  // 我们打补丁把它换成了 new Uint8Array），而 nativeImage.createFromBuffer 要 Node Buffer。
+  const buffer = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+  const image = nativeImage.createFromBuffer(buffer);
+  if (typeof clipboard.write === 'function' && typeof ClipboardItem === 'function') {
+    // toPNG() 保证编码统一；解码失败时退回原始 buffer，别把空图塞进剪贴板
+    const png = image.isEmpty() ? buffer : image.toPNG();
+    // Blob 的片段按 Uint8Array 传（官方示例同款），避免 Buffer 视图/字节偏移带来的歧义
+    await clipboard.write([
+      new ClipboardItem({ 'image/png': new Blob([new Uint8Array(png)], { type: 'image/png' }) })
+    ]);
+    return;
+  }
+  // 兜底：Electron 43 及更早的同步老 API
+  clipboard.writeImage(image);
+}
+
+// 自检：Electron 44+ 的 sandboxed preload 里没有 Buffer 了，而 electron-screenshots
+// 的 preload 用 Buffer.from(arrayBuffer) 发截图数据 —— 不打补丁的话点「确定」
+// 会在渲染端抛 ReferenceError，IPC 发不出来，表现就是「点确认又回到初始截图状态」。
+// 补丁在 patches/electron-screenshots@0.6.2.patch，由 pnpm install 自动应用。
+function checkScreenshotPatch() {
+  try {
+    const preloadPath = require.resolve('electron-screenshots/lib/preload.js');
+    const src = fs.readFileSync(preloadPath, 'utf8');
+    if (src.includes('Buffer.from(arrayBuffer)')) {
+      console.warn('[截图] electron-screenshots 补丁未生效，截图确认可能无反应；请重新执行 pnpm install');
+      return false;
+    }
+  } catch { /* 库结构变化 / 路径不存在：忽略，不影响主流程 */ }
+  return true;
 }
 
 function getScreenshots() {
   if (screenshots) return screenshots;
+  checkScreenshotPatch();
   const Screenshots = require('electron-screenshots');   // CJS 入口直接导出类，不需要 .default
   const s = new Screenshots({ singleWindow: true });
 
   // 点“确定”：自己接管，先写剪贴板，再关闭截图层，最后决定要不要粘贴
   s.on('ok', (event, buffer) => {
     event.preventDefault();
-    try {
-      clipboard.writeImage(nativeImage.createFromBuffer(buffer));
-    } catch (err) {
-      logStartupError('screenshot.clipboard', err);
-      void s.endCapture().then(() => finishCapture(false));
-      return;
-    }
-    void s.endCapture().then(() => finishCapture(true));
+    void (async () => {
+      try {
+        await writeImageToClipboard(buffer);
+      } catch (err) {
+        logStartupError('screenshot.clipboard', err);
+        await s.endCapture();
+        await finishCapture(false);
+        return;
+      }
+      await s.endCapture();
+      await finishCapture(true);
+    })();
   });
   // 取消 / 保存成功：库自己会关闭截图层，这里只负责善后
   s.on('cancel', () => { void finishCapture(false); });
@@ -846,7 +963,7 @@ function openSettings() {
   if (settingsWin && !settingsWin.isDestroyed()) {
     if (settingsWin.isMinimized()) settingsWin.restore();
     settingsWin.show();
-    setLevel(settings.alwaysOnTopOnShow, settingsWin);
+    applyWindowPolicy(settingsWin, desiredPolicy());
     settingsWin.focus();
     return;
   }
@@ -870,8 +987,8 @@ function openSettings() {
   const sw = settingsWin;
   sw.setMenuBarVisibility(false);
   // 主窗口置顶时设置窗口也要置顶，否则它会被主窗口盖住、点都点不到
-  setWindowTopmost(sw, settings.alwaysOnTopOnShow);
-  sw.on('show', () => setLevel(settings.alwaysOnTopOnShow, sw));
+  applyWindowPolicy(sw, desiredPolicy(), true);
+  sw.on('show', () => applyWindowPolicy(sw, desiredPolicy(), true));
   lockLocalPage(sw.webContents);
 
   // 录入快捷键时，已注册的全局热键会被系统先吞掉（按 Ctrl+Alt+A 会直接触发截图，
@@ -905,7 +1022,8 @@ ipcMain.handle('settings:get', (e) => {
   return {
     settings,
     actions: settingsLib.ACTIONS,
-    defaults: settingsLib.defaultSettings()
+    defaults: settingsLib.defaultSettings(),
+    platform: process.platform
   };
 });
 
@@ -920,15 +1038,18 @@ ipcMain.handle('settings:save', (e, raw) => {
 
   // The settings page may have been opened before a service switch.
   settings = { ...v.value, provider: previous.provider };
-  // 置顶开关改动立即生效，不必重启；设置窗口自己也要跟着置顶，
+  // 置顶相关开关改动立即生效，不必重启；设置窗口自己也要跟着置顶，
   // 否则它会被刚刚变成置顶的主窗口盖住（保存有警告时窗口不会自动关闭）
-  // 只在开关变化时更新工作区配置。
-  if (!!previous.alwaysOnTopOnShow !== !!settings.alwaysOnTopOnShow) {
-    setTopmost(settings.alwaysOnTopOnShow);
+  const topmostChanged = !!previous.alwaysOnTopOnShow !== !!settings.alwaysOnTopOnShow;
+  const floatChanged = !!previous.floatAboveFullScreen !== !!settings.floatAboveFullScreen;
+  if (topmostChanged || floatChanged) {
+    // 整套策略重设一遍（含进程类型 / Dock 显示状态），再重新顶到最前
+    applyTopmostPolicy(true);
+    if (settings.alwaysOnTopOnShow) promote();
   }
   if (settingsWin && !settingsWin.isDestroyed()) {
     try {
-      setWindowTopmost(settingsWin, settings.alwaysOnTopOnShow);
+      applyWindowPolicy(settingsWin, desiredPolicy());
       settingsWin.moveTop();
     } catch { /* 忽略 */ }
   }
@@ -936,7 +1057,7 @@ ipcMain.handle('settings:save', (e, raw) => {
   if (!saved.ok) {
     // 配置文件写不进去：回滚内存和热键，避免“本次能用、重启就丢”的假象
     settings = previous;
-    setTopmost(previous.alwaysOnTopOnShow);
+    applyTopmostPolicy(true);
     promote();
     applyGlobalShortcuts(previous.shortcuts, true);
     return { ok: false, error: '保存配置文件失败：' + saved.error };
@@ -1113,10 +1234,6 @@ if (!gotSingleInstanceLock) {
   });
 
   app.whenReady().then(() => {
-    if (IS_MAC) {
-      app.setActivationPolicy('regular');
-      void app.dock.show().catch(err => logStartupError('showDock', err));
-    }
     // 每一步都单独兜底：任何一环失败都不能连累窗口创建
     try { settings = settingsLib.loadSettings(SETTINGS_FILE); } catch (err) { logStartupError('loadSettings', err); }
     try { loadExtensions(); } catch (err) { logStartupError('loadExtensions', err); }

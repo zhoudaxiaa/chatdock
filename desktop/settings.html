@@ -71,6 +71,7 @@
 
   <h2>窗口</h2>
   <div class="row"><label class="toggle"><input type="checkbox" id="alwaysOnTop"><span>快捷键唤起时窗口置顶<br><span class="desc">浮在其他应用上层，不会被挡在后面；顶栏的「置顶」按钮可随时切换</span></span></label></div>
+  <div class="row" id="floatFullScreenRow"><label class="toggle"><input type="checkbox" id="floatFullScreen"><span>连其他应用的全屏窗口也压住（macOS）<br><span class="desc">默认开启：置顶对别的应用的全屏 Space 同样生效。代价是 Dock 图标隐藏、⌘Tab 里不再出现（托盘图标与快捷键不受影响）；关掉则退回「只压普通窗口」，Dock 图标恢复</span></span></label></div>
 
   <h2>截图</h2>
   <div class="row"><label class="toggle"><input type="checkbox" id="hideWindow"><span>截图时先隐藏本应用窗口<br><span class="desc">避免把本应用自己截进画面</span></span></label></div>
@@ -162,6 +163,9 @@
     $('hideWindow').checked = !!draft.hideWindowOnCapture;
     $('autoPaste').checked = !!draft.autoPasteAfterCapture;
     $('alwaysOnTop').checked = !!draft.alwaysOnTopOnShow;
+    $('floatFullScreen').checked = !!draft.floatAboveFullScreen;
+    // 只有 macOS 能这么干，其他平台直接藏掉这一行
+    $('floatFullScreenRow').style.display = state.platform === 'darwin' ? '' : 'none';
   }
 
   // 录入中，鼠标点到「按键框」以外的地方 = 取消录入
@@ -198,6 +202,7 @@
   $('hideWindow').addEventListener('change', (e) => { draft.hideWindowOnCapture = e.target.checked; });
   $('autoPaste').addEventListener('change', (e) => { draft.autoPasteAfterCapture = e.target.checked; });
   $('alwaysOnTop').addEventListener('change', (e) => { draft.alwaysOnTopOnShow = e.target.checked; });
+  $('floatFullScreen').addEventListener('change', (e) => { draft.floatAboveFullScreen = e.target.checked; });
 
   $('resetAll').addEventListener('click', () => {
     draft = JSON.parse(JSON.stringify(state.defaults));

@@ -6,6 +6,7 @@
   "scripts": {
     "start": "electron .",
     "dev:desktop": "electron .",
+    "postinstall": "node scripts/patch-deps.mjs",
     "build:extension": "node scripts/build-extension.mjs",
     "check": "node scripts/build-extension.mjs && node scripts/check.mjs",
     "test": "node scripts/build-extension.mjs && node tests/test_template.mjs && node tests/test_page_info.mjs && node tests/test_delivery.mjs && node extension/tools/test_bridge.mjs && node --test tests/providers.test.cjs tests/desktop.test.cjs tests/sidepanel.test.cjs tests/claude-frame-compat.test.cjs",
@@ -55,9 +56,9 @@
     "npmRebuild": true
   },
   "devDependencies": {
-    "electron": "33.4.11",
-    "electron-builder": "26.15.3",
-    "electron-builder-squirrel-windows": "26.15.3"
+    "electron": "^45.0.0",
+    "electron-builder": "26.18.0",
+    "electron-builder-squirrel-windows": "26.18.0"
   },
   "dependencies": {
     "electron-screenshots": "^0.6.2"

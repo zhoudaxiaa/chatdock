@@ -57,7 +57,7 @@ function boot() {
     if (id === '../shared/providers') return require('../shared/providers');
     if (id === 'http') return { createServer: handler => { serverHandler = handler; return { on() {}, unref() {}, listen(_port, _host, done) { done(); } }; } };
     return require(id);
-  }, __dirname: path.join(__dirname, '../desktop'), console, setTimeout, clearTimeout, setImmediate, process: { platform: process.platform, env: {}, on() {} } };
+  }, __dirname: path.join(__dirname, '../desktop'), console, setTimeout, clearTimeout, setImmediate, process: { platform: process.platform, env: {}, versions: process.versions, on() {} } };
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../desktop/main.js'), 'utf8') + '\nglobalThis.api = { createWindow, switchProvider, startCookieBridge, getSettings: () => settings, getViews: () => providerViews, getBar: () => barView };', sandbox);
   return { ...sandbox.api, handlers, writes, views, app, saved: () => saved, setFailSave: v => { failSave = v; }, bridge: async payload => {

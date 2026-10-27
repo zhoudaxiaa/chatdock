@@ -43,7 +43,12 @@ function defaultSettings() {
     shortcuts,
     hideWindowOnCapture: true,     // 截图时先隐藏本应用窗口，避免把自己截进去
     autoPasteAfterCapture: true,   // 截图确认后自动唤起窗口并粘贴到输入框
-    alwaysOnTopOnShow: true        // 唤起窗口时置顶，浮在其他应用上层
+    alwaysOnTopOnShow: true,       // 唤起窗口时置顶，浮在其他应用上层
+    // 只有 macOS 用得上：置顶时连「别的应用的原生全屏 Space」也一起浮上去。
+    // Electron 只能靠把进程转成 UIElement（app.dock.hide）做到这件事，
+    // 代价是 Dock 图标消失、⌘Tab 里不再出现（托盘图标与快捷键不受影响）。
+    // 默认开启；不想付这个代价的用户可以关掉，退回「只压普通窗口」。
+    floatAboveFullScreen: true
   };
 }
 
@@ -142,7 +147,8 @@ function validateSettings(raw) {
       shortcuts,
       hideWindowOnCapture: bool(raw.hideWindowOnCapture, defaults.hideWindowOnCapture),
       autoPasteAfterCapture: bool(raw.autoPasteAfterCapture, defaults.autoPasteAfterCapture),
-      alwaysOnTopOnShow: bool(raw.alwaysOnTopOnShow, defaults.alwaysOnTopOnShow)
+      alwaysOnTopOnShow: bool(raw.alwaysOnTopOnShow, defaults.alwaysOnTopOnShow),
+      floatAboveFullScreen: bool(raw.floatAboveFullScreen, defaults.floatAboveFullScreen)
     }
   };
 }
@@ -186,7 +192,8 @@ function loadSettings(file) {
     shortcuts: { ...defaults.shortcuts, ...(raw && raw.shortcuts) },
     hideWindowOnCapture: raw && raw.hideWindowOnCapture,
     autoPasteAfterCapture: raw && raw.autoPasteAfterCapture,
-    alwaysOnTopOnShow: raw && raw.alwaysOnTopOnShow
+    alwaysOnTopOnShow: raw && raw.alwaysOnTopOnShow,
+    floatAboveFullScreen: raw && raw.floatAboveFullScreen
   };
   const r = validateSettings(merged);
   if (r.ok) return r.value;
@@ -197,7 +204,8 @@ function loadSettings(file) {
     shortcuts: defaults.shortcuts,
     hideWindowOnCapture: bool(merged.hideWindowOnCapture, defaults.hideWindowOnCapture),
     autoPasteAfterCapture: bool(merged.autoPasteAfterCapture, defaults.autoPasteAfterCapture),
-    alwaysOnTopOnShow: bool(merged.alwaysOnTopOnShow, defaults.alwaysOnTopOnShow)
+    alwaysOnTopOnShow: bool(merged.alwaysOnTopOnShow, defaults.alwaysOnTopOnShow),
+    floatAboveFullScreen: bool(merged.floatAboveFullScreen, defaults.floatAboveFullScreen)
   };
 }
 
